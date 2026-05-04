@@ -1,12 +1,5 @@
 name: VisionGuard Production Pipeline
 
-# Continuous Inspection cognitivo em produção com gate humano:
-#   1. pre-deploy-audit → VisionGuard audita ANTES do deploy (contexto p/ o revisor)
-#   2. snapshot        → guarda gh-pages atual em prod-stable (last-known-good)
-#   3. deploy          → publicar public/ em gh-pages (gate: environment "production" — aprovação humana)
-#   4. smoke           → HTTP check + Playwright + Gemini STRICT contra a URL real de prod
-#   5. rollback        → se smoke falhar, restaura prod-stable e abre issue
-
 on:
   push:
     branches: [ main ]
@@ -23,13 +16,15 @@ concurrency:
 
 env:
   PROD_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/
+  SANDBOX_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/sandbox/
+  PAGES_BASE: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}
 
 jobs:
-  # ─── 1. Auditoria pré-deploy (contexto para o revisor humano) ────────────
-  pre-deploy-audit:
-    name: 🔍 Auditoria pré-deploy
+  # ─── 1. Sandbox: deploy + testes funcionais + auditoria ──────────────────
+  sandbox:
+    name: 🧪 Sandbox (testes + auditoria)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -51,39 +46,62 @@ jobs:
           npm install
           npx playwright install chromium --with-deps
 
-      - name: 📸 Capturar estado pré-deploy
-        run: |
-          npx http-server public -p 8080 &
-          npx wait-on http://localhost:8080 --timeout 30000
-          npx playwright test tests/visual.spec.js
+      - name: 🚀 Deploy para /sandbox/
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./public
+          publish_branch: gh-pages
+          destination_dir: sandbox
+          keep_files: true
+          commit_message: "sandbox: ${{ github.sha }}"
 
-      - name: 📤 Publicar screenshots pré-deploy
+      - name: ⏳ Aguardar sandbox responder HTTP 200
+        run: |
+          for i in {1..30}; do
+            CODE=$(curl -s -o /dev/null -w "%{http_code}" "${{ env.SANDBOX_URL }}")
+            if [ "$CODE" = "200" ]; then
+              echo "✅ Sandbox live"
+              exit 0
+            fi
+            echo "⏳ ($i/30) HTTP=$CODE — aguardando..."
+            sleep 10
+          done
+          echo "❌ Sandbox não respondeu HTTP 200 em 5min"
+          exit 1
+
+      - name: 🧪 Testes funcionais (Playwright)
+        env:
+          BASE_URL: ${{ env.SANDBOX_URL }}
+        run: npx playwright test tests/functional.spec.js
+
+      - name: 📸 Capturar evidências visuais (sandbox)
+        env:
+          BASE_URL: ${{ env.SANDBOX_URL }}
+        run: npx playwright test tests/visual.spec.js
+
+      - name: 📤 Publicar screenshots em gh-pages/evidence/sandbox/
+        if: always()
+        continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -e
           ORIG_DIR="$PWD"
-          BRANCH="visionguard-evidence"
           SHA_SHORT="${GITHUB_SHA:0:7}"
-          SUBFOLDER="deploy-${SHA_SHORT}-run-${{ github.run_number }}"
+          SUBFOLDER="evidence/sandbox/${SHA_SHORT}-run-${{ github.run_number }}"
 
           git config --global user.name "visionguard-bot"
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          WORK=$(mktemp -d)
-          if git ls-remote --exit-code --heads origin "$BRANCH" > /dev/null 2>&1; then
-            git clone --depth 1 --branch "$BRANCH" \
-              "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git" "$WORK"
-          else
-            git init "$WORK"
-            cd "$WORK"
-            git remote add origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git"
-            git checkout --orphan "$BRANCH"
-            echo "# VisionGuard — Evidências de Auditoria" > README.md
-            git add README.md
-            git commit -m "chore: init evidence branch"
-            cd "$ORIG_DIR"
+          if ! git ls-remote --exit-code --heads origin gh-pages > /dev/null 2>&1; then
+            echo "ℹ️ gh-pages não existe ainda"
+            exit 0
           fi
+
+          WORK=$(mktemp -d)
+          git clone --depth 1 --branch gh-pages \
+            "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git" "$WORK"
 
           mkdir -p "$WORK/$SUBFOLDER"
           for f in screenshot-*.png; do
@@ -92,24 +110,26 @@ jobs:
 
           cd "$WORK"
           git add -A
-          git diff --staged --quiet || git commit -m "evidence: pré-deploy ${SHA_SHORT} @ $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          git push origin "$BRANCH" --force
+          git diff --staged --quiet && { echo "ℹ️ Sem screenshots novos"; exit 0; }
+          git commit -m "evidence: sandbox ${SHA_SHORT} run-${{ github.run_number }} @ $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          git push origin gh-pages
           cd "$ORIG_DIR"
 
-          echo "SCREENSHOTS_BASE_URL=https://raw.githubusercontent.com/${{ github.repository }}/visionguard-evidence/${SUBFOLDER}" >> "$GITHUB_ENV"
+          echo "SCREENSHOTS_BASE_URL=${{ env.PAGES_BASE }}/${SUBFOLDER}" >> "$GITHUB_ENV"
 
-      - name: 🧠 Auditoria pré-deploy (relatório p/ revisor)
+      - name: 🧠 Auditoria cognitiva (sandbox — sem STRICT)
+        if: always()
         env:
           CI: 'true'
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           SCREENSHOTS_BASE_URL: ${{ env.SCREENSHOTS_BASE_URL }}
         run: node ai_agents/visual_qa.js
 
-      - name: 💾 Salvar relatório pré-deploy
+      - name: 💾 Salvar evidências do sandbox
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: pre-deploy-audit-${{ github.sha }}
+          name: sandbox-evidence-${{ github.sha }}
           path: |
             screenshot-*.png
             audit-output.md
@@ -118,7 +138,7 @@ jobs:
   # ─── 2. Snapshot da versão atual de produção ──────────────────────────────
   snapshot:
     name: 📦 Snapshot prod-stable
-    needs: pre-deploy-audit
+    needs: sandbox
     runs-on: ubuntu-latest
     outputs:
       had_previous: ${{ steps.snap.outputs.had_previous }}
@@ -154,12 +174,13 @@ jobs:
     environment: production
     steps:
       - uses: actions/checkout@v4
-      - name: Publicar public/ em gh-pages
+      - name: Publicar public/ em gh-pages (preserva /sandbox/ e /evidence/)
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./public
           publish_branch: gh-pages
+          keep_files: true
           commit_message: "deploy: ${{ github.sha }}"
 
   # ─── 4. Smoke test em produção (HTTP + IA STRICT) ─────────────────────────
@@ -174,9 +195,9 @@ jobs:
       - name: ⏳ Aguardar prod responder HTTP 200
         run: |
           for i in {1..30}; do
-            CODE=$(curl -s -o /dev/null -w "%{http_code}" "$PROD_URL")
+            CODE=$(curl -s -o /dev/null -w "%{http_code}" "${{ env.PROD_URL }}")
             if [ "$CODE" = "200" ]; then
-              echo "✅ Prod live em $PROD_URL"
+              echo "✅ Prod live em ${{ env.PROD_URL }}"
               exit 0
             fi
             echo "⏳ ($i/30) HTTP=$CODE — aguardando..."
@@ -201,22 +222,22 @@ jobs:
           BASE_URL: ${{ env.PROD_URL }}
         run: npx playwright test tests/visual.spec.js
 
-      - name: 📤 Publicar screenshots de produção
+      - name: 📤 Publicar screenshots de produção em gh-pages/evidence/prod/
         if: always()
+        continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -e
           ORIG_DIR="$PWD"
-          BRANCH="visionguard-evidence"
           SHA_SHORT="${GITHUB_SHA:0:7}"
-          SUBFOLDER="prod-${SHA_SHORT}-run-${{ github.run_number }}"
+          SUBFOLDER="evidence/prod/${SHA_SHORT}-run-${{ github.run_number }}"
 
           git config --global user.name "visionguard-bot"
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           WORK=$(mktemp -d)
-          git clone --depth 1 --branch "$BRANCH" \
+          git clone --depth 1 --branch gh-pages \
             "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git" "$WORK"
 
           mkdir -p "$WORK/$SUBFOLDER"
@@ -226,11 +247,12 @@ jobs:
 
           cd "$WORK"
           git add -A
-          git diff --staged --quiet || git commit -m "evidence: prod smoke ${SHA_SHORT} @ $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          git push origin "$BRANCH" --force
+          git diff --staged --quiet && { echo "ℹ️ Sem screenshots novos"; exit 0; }
+          git commit -m "evidence: prod smoke ${SHA_SHORT} run-${{ github.run_number }} @ $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          git push origin gh-pages
           cd "$ORIG_DIR"
 
-          echo "SCREENSHOTS_BASE_URL=https://raw.githubusercontent.com/${{ github.repository }}/visionguard-evidence/${SUBFOLDER}" >> "$GITHUB_ENV"
+          echo "SCREENSHOTS_BASE_URL=${{ env.PAGES_BASE }}/${SUBFOLDER}" >> "$GITHUB_ENV"
 
       - name: 🧠 Auditoria cognitiva em produção (STRICT)
         env:
@@ -242,6 +264,7 @@ jobs:
 
       - name: 📊 Atualizar badge e histórico
         if: always()
+        continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -253,8 +276,19 @@ jobs:
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           WORK=$(mktemp -d)
-          git clone --depth 1 --branch "$BRANCH" \
-            "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git" "$WORK"
+          if git ls-remote --exit-code --heads origin "$BRANCH" > /dev/null 2>&1; then
+            git clone --depth 1 --branch "$BRANCH" \
+              "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git" "$WORK"
+          else
+            git init "$WORK"
+            cd "$WORK"
+            git remote add origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git"
+            git checkout --orphan "$BRANCH"
+            echo "# VisionGuard — Evidências de Auditoria" > README.md
+            git add README.md
+            git commit -m "chore: init evidence branch"
+            cd "$ORIG_DIR"
+          fi
 
           [ -f badge.json ] && cp badge.json "$WORK/"
 
