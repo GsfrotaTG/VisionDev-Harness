@@ -147,7 +147,7 @@
 </head>
 <body>
     <header data-testid="app-header">
-        <h1>Gerenciador de Tarefas</h1>
+        <h1>VisionGuard Demo — Multi-Screen</h1>
     </header>
 
     <main>
@@ -180,6 +180,33 @@
                     <button class="delete-btn" data-testid="delete-button">Excluir</button>
                 </li>
             </ul>
+        </section>
+
+        <!-- ───── Módulo: Formulário de Login ───── -->
+        <section class="form-section" data-testid="login-section" style="margin-top:2rem; border-top: 2px dashed var(--border-color); padding-top:1.5rem;">
+            <h2>Login</h2>
+            <form id="login-form" data-testid="login-form">
+                <div class="input-group">
+                    <label for="email-input">E-mail</label>
+                    <input type="email" id="email-input" placeholder="voce@empresa.com" data-testid="email-input">
+                </div>
+                <div class="input-group">
+                    <label for="password-input">Senha</label>
+                    <input type="password" id="password-input" placeholder="••••••••" data-testid="password-input">
+                </div>
+                <div style="display:flex; gap:0.75rem;">
+                    <button type="submit"
+                            data-testid="login-button"
+                            style="background-color:#16a34a; flex:1;">
+                        Entrar
+                    </button>
+                    <button type="button"
+                            data-testid="cancel-button"
+                            style="background-color:#6b7280; flex:1;">
+                        Cancelar
+                    </button>
+                </div>
+            </form>
         </section>
     </main>
 

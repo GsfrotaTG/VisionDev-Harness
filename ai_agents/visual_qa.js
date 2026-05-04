@@ -42,11 +42,27 @@ function buildComment(agentUsed, humanReport, veredito, screenshotsUrl) {
   const lines = [`### 🛡️ VisionGuard Audit — ${statusIcon} ${veredito ?? "N/A"}`, `**Motor:** \`${agentUsed}\``];
 
   if (screenshotsUrl) {
+    // Close-ups dinâmicos — lê os mesmos targets do Playwright
+    const targets = fs.existsSync("./skills/capture-targets.json")
+      ? JSON.parse(fs.readFileSync("./skills/capture-targets.json", "utf8"))
+      : [];
+
+    const captured = targets.filter(t => {
+      const slug = t.label.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
+      return fs.existsSync(`screenshot-${slug}.png`);
+    });
+
+    if (captured.length > 0) {
+      const headers = captured.map(t => `**${t.label}**`).join(" | ");
+      const seps    = captured.map(() => ":---:").join(" | ");
+      const imgs    = captured.map(t => {
+        const slug = t.label.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
+        return `![${t.label}](${screenshotsUrl}/screenshot-${slug}.png)`;
+      }).join(" | ");
+      lines.push("", `| ${headers} |`, `| ${seps} |`, `| ${imgs} |`);
+    }
+
     lines.push(
-      "",
-      "| Botão **Adicionar** | Botão **Excluir** |",
-      "|:---:|:---:|",
-      `| ![Adicionar](${screenshotsUrl}/screenshot-btn-adicionar.png) | ![Excluir](${screenshotsUrl}/screenshot-btn-excluir.png) |`,
       "",
       "<details>",
       "<summary>📸 Screenshot completo da interface</summary>",
@@ -80,7 +96,27 @@ async function runVisionGuard() {
     process.exit(1);
   }
 
-  const businessRules = fs.readFileSync("./skills/business-rules.md", "utf8");
+  // Gate: regras de negócio são obrigatórias — sem elas não há auditoria
+  const brPath = "./skills/business-rules.md";
+  const businessRules = fs.existsSync(brPath) ? fs.readFileSync(brPath, "utf8").trim() : "";
+  if (!businessRules) {
+    const msg = [
+      "### ⚠️ VisionGuard — Regras de Negócio Ausentes",
+      "",
+      "`skills/business-rules.md` está vazio ou não existe.",
+      "",
+      "**Sem regras definidas não há como auditar.** Crie o arquivo com as diretrizes da tela antes de abrir um PR.",
+      "",
+      "Exemplo:",
+      "```markdown",
+      "- O botão \"Confirmar\" deve ser VERDE (#16a34a).",
+      "- O botão \"Cancelar\" deve ser CINZA (#6b7280).",
+      "```",
+    ].join("\n");
+    console.error("❌ skills/business-rules.md ausente ou vazio — auditoria bloqueada.");
+    await postPRComment(msg);
+    process.exit(1);
+  }
 
   let diff = fs.existsSync("changes.diff") ? fs.readFileSync("changes.diff", "utf8") : "";
   if (!diff || diff.trim() === "") {
