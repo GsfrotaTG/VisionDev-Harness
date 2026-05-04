@@ -1,10 +1,11 @@
 name: VisionGuard Production Pipeline
 
-# Continuous Inspection cognitivo em produção:
-#   1. snapshot   → guarda gh-pages atual em prod-stable (last-known-good)
-#   2. deploy     → publica public/ em gh-pages
-#   3. smoke      → HTTP check + Playwright + Gemini audit contra a URL real de prod
-#   4. rollback   → se smoke falhar, restaura prod-stable e abre issue
+# Continuous Inspection cognitivo em produção com gate humano:
+#   1. pre-deploy-audit → VisionGuard audita ANTES do deploy (contexto p/ o revisor)
+#   2. snapshot        → guarda gh-pages atual em prod-stable (last-known-good)
+#   3. deploy          → publicar public/ em gh-pages (gate: environment "production" — aprovação humana)
+#   4. smoke           → HTTP check + Playwright + Gemini STRICT contra a URL real de prod
+#   5. rollback        → se smoke falhar, restaura prod-stable e abre issue
 
 on:
   push:
@@ -24,15 +25,107 @@ env:
   PROD_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/
 
 jobs:
-  # ─── 1. Snapshot da versão atual de produção ──────────────────────────────
+  # ─── 1. Auditoria pré-deploy (contexto para o revisor humano) ────────────
+  pre-deploy-audit:
+    name: 🔍 Auditoria pré-deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 🔑 Verificar GEMINI_API_KEY
+        run: |
+          if [ -z "${{ secrets.GEMINI_API_KEY }}" ]; then
+            echo "❌ GEMINI_API_KEY ausente."
+            exit 1
+          fi
+
+      - name: ⚙️ Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: 📦 Instalar Dependências
+        run: |
+          npm install
+          npx playwright install chromium --with-deps
+
+      - name: 📸 Capturar estado pré-deploy
+        run: |
+          npx http-server public -p 8080 &
+          npx wait-on http://localhost:8080 --timeout 30000
+          npx playwright test tests/visual.spec.js
+
+      - name: 📤 Publicar screenshots pré-deploy
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          ORIG_DIR="$PWD"
+          BRANCH="visionguard-evidence"
+          SHA_SHORT="${GITHUB_SHA:0:7}"
+          SUBFOLDER="deploy-${SHA_SHORT}-run-${{ github.run_number }}"
+
+          git config --global user.name "visionguard-bot"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          WORK=$(mktemp -d)
+          if git ls-remote --exit-code --heads origin "$BRANCH" > /dev/null 2>&1; then
+            git clone --depth 1 --branch "$BRANCH" \
+              "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git" "$WORK"
+          else
+            git init "$WORK"
+            cd "$WORK"
+            git remote add origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git"
+            git checkout --orphan "$BRANCH"
+            echo "# VisionGuard — Evidências de Auditoria" > README.md
+            git add README.md
+            git commit -m "chore: init evidence branch"
+            cd "$ORIG_DIR"
+          fi
+
+          mkdir -p "$WORK/$SUBFOLDER"
+          for f in screenshot-final.png screenshot-btn-adicionar.png screenshot-btn-excluir.png; do
+            [ -f "$f" ] && cp "$f" "$WORK/$SUBFOLDER/" || true
+          done
+
+          cd "$WORK"
+          git add -A
+          git diff --staged --quiet || git commit -m "evidence: pré-deploy ${SHA_SHORT} @ $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          git push origin "$BRANCH" --force
+          cd "$ORIG_DIR"
+
+          echo "SCREENSHOTS_BASE_URL=https://raw.githubusercontent.com/${{ github.repository }}/visionguard-evidence/${SUBFOLDER}" >> "$GITHUB_ENV"
+
+      - name: 🧠 Auditoria pré-deploy (relatório p/ revisor)
+        env:
+          CI: 'true'
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          SCREENSHOTS_BASE_URL: ${{ env.SCREENSHOTS_BASE_URL }}
+        run: node ai_agents/visual_qa.js
+
+      - name: 💾 Salvar relatório pré-deploy
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pre-deploy-audit-${{ github.sha }}
+          path: |
+            screenshot-final.png
+            screenshot-btn-adicionar.png
+            screenshot-btn-excluir.png
+            audit-output.md
+          retention-days: 14
+
+  # ─── 2. Snapshot da versão atual de produção ──────────────────────────────
   snapshot:
     name: 📦 Snapshot prod-stable
+    needs: pre-deploy-audit
     runs-on: ubuntu-latest
     outputs:
       had_previous: ${{ steps.snap.outputs.had_previous }}
     steps:
       - name: Checkout do gh-pages atual
-        id: checkout-pages
         uses: actions/checkout@v4
         with:
           ref: gh-pages
@@ -45,7 +138,7 @@ jobs:
           if [ -d pages-current ] && [ -f pages-current/index.html ]; then
             cd pages-current
             git config user.name "visionguard-bot"
-            git config user.email "visionguard@users.noreply.github.com"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git checkout -B prod-stable
             git push origin prod-stable --force
             echo "had_previous=true" >> $GITHUB_OUTPUT
@@ -55,11 +148,12 @@ jobs:
             echo "ℹ️ Nenhum gh-pages anterior — primeiro deploy"
           fi
 
-  # ─── 2. Deploy em produção (GitHub Pages) ─────────────────────────────────
+  # ─── 3. Deploy em produção (gate: aprovação humana) ───────────────────────
   deploy:
     name: 🚀 Deploy em produção
     needs: snapshot
     runs-on: ubuntu-latest
+    environment: production
     steps:
       - uses: actions/checkout@v4
       - name: Publicar public/ em gh-pages
@@ -70,7 +164,7 @@ jobs:
           publish_branch: gh-pages
           commit_message: "deploy: ${{ github.sha }}"
 
-  # ─── 3. Smoke test em produção (HTTP + IA) ────────────────────────────────
+  # ─── 4. Smoke test em produção (HTTP + IA STRICT) ─────────────────────────
   smoke-test:
     name: 🔬 Smoke test em produção
     needs: deploy
@@ -78,13 +172,6 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-
-      - name: 🔑 Verificar GEMINI_API_KEY
-        run: |
-          if [ -z "${{ secrets.GEMINI_API_KEY }}" ]; then
-            echo "❌ GEMINI_API_KEY ausente — sem secret não há auditoria. Falhando para acionar rollback."
-            exit 1
-          fi
 
       - name: ⏳ Aguardar prod responder HTTP 200
         run: |
@@ -94,7 +181,7 @@ jobs:
               echo "✅ Prod live em $PROD_URL"
               exit 0
             fi
-            echo "⏳ ($i/30) Aguardando prod... HTTP=$CODE"
+            echo "⏳ ($i/30) HTTP=$CODE — aguardando..."
             sleep 10
           done
           echo "❌ Prod não respondeu HTTP 200 em 5min"
@@ -116,24 +203,93 @@ jobs:
           BASE_URL: ${{ env.PROD_URL }}
         run: npx playwright test tests/visual.spec.js
 
-      - name: 🧠 Auditoria cognitiva (STRICT)
+      - name: 📤 Publicar screenshots de produção
+        if: always()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          ORIG_DIR="$PWD"
+          BRANCH="visionguard-evidence"
+          SHA_SHORT="${GITHUB_SHA:0:7}"
+          SUBFOLDER="prod-${SHA_SHORT}-run-${{ github.run_number }}"
+
+          git config --global user.name "visionguard-bot"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          WORK=$(mktemp -d)
+          git clone --depth 1 --branch "$BRANCH" \
+            "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git" "$WORK"
+
+          mkdir -p "$WORK/$SUBFOLDER"
+          for f in screenshot-final.png screenshot-btn-adicionar.png screenshot-btn-excluir.png; do
+            [ -f "$f" ] && cp "$f" "$WORK/$SUBFOLDER/" || true
+          done
+
+          cd "$WORK"
+          git add -A
+          git diff --staged --quiet || git commit -m "evidence: prod smoke ${SHA_SHORT} @ $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          git push origin "$BRANCH" --force
+          cd "$ORIG_DIR"
+
+          echo "SCREENSHOTS_BASE_URL=https://raw.githubusercontent.com/${{ github.repository }}/visionguard-evidence/${SUBFOLDER}" >> "$GITHUB_ENV"
+
+      - name: 🧠 Auditoria cognitiva em produção (STRICT)
         env:
           CI: 'true'
           STRICT_MODE: 'true'
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          SCREENSHOTS_BASE_URL: ${{ env.SCREENSHOTS_BASE_URL }}
         run: node ai_agents/visual_qa.js
 
-      - name: 💾 Salvar evidências
+      - name: 📊 Atualizar badge e histórico
+        if: always()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          ORIG_DIR="$PWD"
+          BRANCH="visionguard-evidence"
+
+          git config --global user.name "visionguard-bot"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          WORK=$(mktemp -d)
+          git clone --depth 1 --branch "$BRANCH" \
+            "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git" "$WORK"
+
+          [ -f badge.json ] && cp badge.json "$WORK/"
+
+          HISTORY="$WORK/audit-history.md"
+          if [ ! -f "$HISTORY" ]; then
+            printf '# Histórico de Auditorias VisionGuard\n\n| Data | Commit | Ambiente | Veredito | Run |\n|---|---|---|---|---|\n' > "$HISTORY"
+          fi
+          DATE=$(date -u +"%Y-%m-%d %H:%M UTC")
+          SHA_SHORT="${GITHUB_SHA:0:7}"
+          RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          VEREDITO=$(grep -o '\[APROVADO\]\|\[REPROVADO\]' audit-output.md 2>/dev/null | head -1 || echo "N/A")
+          printf '| %s | `%s` | produção | **%s** | [ver](%s) |\n' \
+            "$DATE" "$SHA_SHORT" "$VEREDITO" "$RUN_URL" >> "$HISTORY"
+
+          cd "$WORK"
+          git add -A
+          git diff --staged --quiet || git commit -m "evidence: badge + histórico prod ${SHA_SHORT}"
+          git push origin "$BRANCH" --force
+          cd "$ORIG_DIR"
+
+      - name: 💾 Salvar evidências de produção
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: prod-smoke-evidence
+          name: prod-smoke-evidence-${{ github.sha }}
           path: |
             screenshot-final.png
+            screenshot-btn-adicionar.png
+            screenshot-btn-excluir.png
             audit-output.md
           retention-days: 14
 
-  # ─── 4. Rollback automático em caso de falha ──────────────────────────────
+  # ─── 5. Rollback automático em caso de falha ──────────────────────────────
   rollback:
     name: 🔙 Rollback automático
     needs: [snapshot, smoke-test]
@@ -143,23 +299,23 @@ jobs:
       - name: Baixar evidências do smoke test
         uses: actions/download-artifact@v4
         with:
-          name: prod-smoke-evidence
+          name: prod-smoke-evidence-${{ github.sha }}
           path: ./evidence
         continue-on-error: true
 
-      - name: Restaurar prod-stable em gh-pages
+      - name: Checkout prod-stable
         if: needs.snapshot.outputs.had_previous == 'true'
         uses: actions/checkout@v4
         with:
           ref: prod-stable
           path: stable
 
-      - name: Force-push prod-stable → gh-pages
+      - name: Restaurar prod-stable → gh-pages
         if: needs.snapshot.outputs.had_previous == 'true'
         run: |
           cd stable
           git config user.name "visionguard-bot"
-          git config user.email "visionguard@users.noreply.github.com"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -B gh-pages
           git push origin gh-pages --force
           echo "✅ Rollback concluído — gh-pages restaurado para prod-stable"
@@ -169,10 +325,10 @@ jobs:
         with:
           script: |
             const fs = require('fs');
-            let auditBody = '_(relatório de auditoria não disponível)_';
+            let auditBody = '_(relatório indisponível — verifique os artefatos do run)_';
             try {
               auditBody = fs.readFileSync('./evidence/audit-output.md', 'utf8');
-            } catch (e) { /* artifact ausente — segue */ }
+            } catch (e) { /* artifact ausente */ }
 
             const hadPrevious = '${{ needs.snapshot.outputs.had_previous }}' === 'true';
             const rollbackNote = hadPrevious
@@ -181,6 +337,7 @@ jobs:
 
             const sha = context.sha.substring(0, 7);
             const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const prodUrl = process.env.PROD_URL || 'N/A';
 
             await github.rest.issues.create({
               owner: context.repo.owner,
@@ -189,18 +346,20 @@ jobs:
               body: [
                 `## Falha detectada no smoke test pós-deploy`,
                 ``,
-                `${rollbackNote}`,
+                rollbackNote,
                 ``,
-                `- **Commit que falhou:** \`${context.sha}\``,
-                `- **Workflow run:** [Ver logs](${runUrl})`,
-                `- **URL de produção:** ${process.env.PROD_URL || 'N/A'}`,
+                `| Campo | Valor |`,
+                `|---|---|`,
+                `| **Commit** | \`${context.sha}\` |`,
+                `| **URL de prod** | ${prodUrl} |`,
+                `| **Workflow run** | [Ver logs](${runUrl}) |`,
                 ``,
                 `### Relatório do VisionGuard`,
                 ``,
                 auditBody,
                 ``,
                 `---`,
-                `_Ação: investigar a causa da reprovação, corrigir, abrir PR. O VisionGuard reauditará automaticamente._`,
+                `_Próximos passos: investigar a causa, corrigir em branch, abrir PR. O VisionGuard reauditará na próxima PR._`,
               ].join('\n'),
               labels: ['rollback', 'production-incident', 'visionguard'],
             });

@@ -2,6 +2,9 @@
 
 > **Continuous Inspection cognitivo para CI/CD** — transforma a esteira de GitHub Actions num QA Sênior autônomo que entende regras de negócio.
 
+[![VisionGuard](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/GsfrotaTG/VisionDev-Harness/visionguard-evidence/badge.json&style=for-the-badge)](https://github.com/GsfrotaTG/VisionDev-Harness/actions)
+[![Histórico de Auditorias](https://img.shields.io/badge/histórico-auditorias-blue?style=for-the-badge&logo=github)](https://github.com/GsfrotaTG/VisionDev-Harness/blob/visionguard-evidence/audit-history.md)
+
 Projeto do **Hackathon Thoughtworks 2026**.
 
 ---

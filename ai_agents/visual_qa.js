@@ -16,7 +16,7 @@ async function generateWithRetry(model, parts, maxAttempts = 3) {
       const isLast = attempt === maxAttempts;
       console.warn(`⚠️  Gemini tentativa ${attempt}/${maxAttempts} falhou: [${err.status ?? err.code}] ${err.message}`);
       if (isLast) throw err;
-      await sleep(1000 * Math.pow(2, attempt - 1)); // 1s, 2s, 4s
+      await sleep(1000 * Math.pow(2, attempt - 1));
     }
   }
 }
@@ -35,6 +35,41 @@ async function postPRComment(body) {
   } catch (e) {
     console.warn("⚠️  Não foi possível comentar no PR:", e.message);
   }
+}
+
+function buildComment(agentUsed, humanReport, veredito, screenshotsUrl) {
+  const statusIcon = veredito?.includes("APROVADO") ? "✅" : "❌";
+  const lines = [`### 🛡️ VisionGuard Audit — ${statusIcon} ${veredito ?? "N/A"}`, `**Motor:** \`${agentUsed}\``];
+
+  if (screenshotsUrl) {
+    lines.push(
+      "",
+      "| Botão **Adicionar** | Botão **Excluir** |",
+      "|:---:|:---:|",
+      `| ![Adicionar](${screenshotsUrl}/screenshot-btn-adicionar.png) | ![Excluir](${screenshotsUrl}/screenshot-btn-excluir.png) |`,
+      "",
+      "<details>",
+      "<summary>📸 Screenshot completo da interface</summary>",
+      "",
+      `![Interface completa](${screenshotsUrl}/screenshot-final.png)`,
+      "",
+      "</details>"
+    );
+  }
+
+  lines.push("", "---", "", humanReport);
+  return lines.join("\n");
+}
+
+function writeBadge(veredito) {
+  const aprovado = veredito?.includes("APROVADO");
+  fs.writeFileSync("badge.json", JSON.stringify({
+    schemaVersion: 1,
+    label: "VisionGuard",
+    message: aprovado ? "aprovado" : "reprovado",
+    color: aprovado ? "brightgreen" : "critical",
+    namedLogo: "github-actions",
+  }, null, 2));
 }
 
 async function runVisionGuard() {
@@ -76,7 +111,7 @@ async function runVisionGuard() {
     }
   `;
 
-  let responseText = null;
+  let humanReport = null;
   let agentUsed = "";
   let veredito = null;
 
@@ -94,11 +129,10 @@ async function runVisionGuard() {
       { inlineData: { data: imageBase64, mimeType: "image/png" } },
     ]);
 
-    const raw = response.text();
-    const parsed = JSON.parse(raw);
+    const parsed = JSON.parse(response.text());
     veredito = parsed.veredito;
 
-    responseText = [
+    humanReport = [
       `**Descrição:** ${parsed.descricao}`,
       parsed.violacoes?.length
         ? `**Violações:**\n${parsed.violacoes.map(v => `- ${v}`).join("\n")}`
@@ -110,7 +144,6 @@ async function runVisionGuard() {
   } catch (cloudErr) {
     console.error(`❌ Gemini falhou após retries: [${cloudErr.status ?? cloudErr.code}] ${cloudErr.message}`);
 
-    // Fallback local (Ollama) — só em ambiente dev, nunca em CI
     if (process.env.CI !== "true") {
       try {
         console.log("🔄 Acionando fallback local (Ollama)...");
@@ -126,14 +159,14 @@ async function runVisionGuard() {
           }),
         });
         const data = await localResponse.json();
-        responseText = data.response;
+        humanReport = data.response;
         agentUsed = "Ollama llama3.2-vision (Local)";
       } catch (localErr) {
         console.error("❌ Ollama também indisponível:", localErr.message);
       }
     }
 
-    if (!responseText) {
+    if (!humanReport) {
       const errorBody = [
         "### ⚠️ VisionGuard — Falha na Auditoria",
         "O motor de IA não conseguiu processar a análise. Detalhes do erro:",
@@ -141,24 +174,24 @@ async function runVisionGuard() {
         "**Ação necessária:** Verifique se o secret `GEMINI_API_KEY` está configurado corretamente no repositório.",
       ].join("\n\n");
       await postPRComment(errorBody);
+      writeBadge(null);
       process.exit(1);
     }
   }
 
   // --- OUTPUT ---
   console.log(`\n--- ✨ RELATÓRIO VISIONGUARD (${agentUsed}) ---`);
-  console.log(responseText);
+  console.log(humanReport);
   console.log("-------------------------------------------\n");
 
-  // Persiste relatório como artifact para downstream jobs (rollback issue, etc)
-  fs.writeFileSync(
-    "audit-output.md",
-    `### 🛡️ VisionGuard Audit\n**Motor:** \`${agentUsed}\`\n\n${responseText}\n`
-  );
+  // Artefatos para downstream jobs
+  fs.writeFileSync("audit-output.md", `### 🛡️ VisionGuard Audit\n**Motor:** \`${agentUsed}\`\n\n${humanReport}\n`);
+  writeBadge(veredito);
 
-  await postPRComment(`### 🛡️ VisionGuard Audit\n**Motor:** \`${agentUsed}\`\n\n${responseText}`);
+  // Comentário no PR com imagens inline (se SCREENSHOTS_BASE_URL disponível)
+  const comment = buildComment(agentUsed, humanReport, veredito, process.env.SCREENSHOTS_BASE_URL || null);
+  await postPRComment(comment);
 
-  // Em STRICT_MODE (smoke test em produção), reprovação derruba o pipeline
   if (process.env.STRICT_MODE === "true" && veredito && !veredito.includes("APROVADO")) {
     console.error("🚨 STRICT_MODE: veredito é REPROVADO — sinalizando falha para acionar rollback.");
     process.exit(2);
