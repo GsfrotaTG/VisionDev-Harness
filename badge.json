@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "label": "VisionGuard",
-  "message": "reprovado",
-  "color": "critical",
+  "message": "aprovado",
+  "color": "brightgreen",
   "namedLogo": "github-actions"
 }
