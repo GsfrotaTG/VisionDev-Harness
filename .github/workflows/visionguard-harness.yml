@@ -6,7 +6,7 @@ on:
     types: [opened, synchronize, reopened]
 
 permissions:
-  contents: read
+  contents: write
   pull-requests: write
 
 jobs:
@@ -23,7 +23,7 @@ jobs:
       - name: 🔑 Verificar GEMINI_API_KEY
         run: |
           if [ -z "${{ secrets.GEMINI_API_KEY }}" ]; then
-            echo "❌ O secret GEMINI_API_KEY não está configurado."
+            echo "❌ GEMINI_API_KEY não está configurado."
             echo "Acesse: Settings → Secrets and variables → Actions → New repository secret"
             exit 1
           fi
@@ -49,13 +49,51 @@ jobs:
           npx wait-on http://localhost:8080 --timeout 30000
           npx playwright test tests/visual.spec.js
 
-      - name: 💾 Salvar Artefatos
+      - name: 📤 Publicar screenshots de evidência
         if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: visionguard-evidence
-          path: screenshot-final.png
-          retention-days: 5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          BRANCH="visionguard-evidence"
+          PR="${{ github.event.pull_request.number }}"
+          SUBFOLDER="pr-${PR}"
+
+          git config user.name "visionguard-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          WORK=$(mktemp -d)
+          if git ls-remote --exit-code --heads origin "$BRANCH" > /dev/null 2>&1; then
+            git clone --depth 1 --branch "$BRANCH" \
+              "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git" "$WORK"
+          else
+            git init "$WORK"
+            cd "$WORK"
+            git remote add origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git"
+            git checkout --orphan "$BRANCH"
+            echo "# VisionGuard — Evidências de Auditoria" > README.md
+            git add README.md
+            git commit -m "chore: init evidence branch"
+          fi
+
+          cd "$WORK"
+          git config user.name "visionguard-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          mkdir -p "$SUBFOLDER"
+          cd "$OLDPWD"
+
+          for f in screenshot-final.png screenshot-btn-adicionar.png screenshot-btn-excluir.png; do
+            [ -f "$f" ] && cp "$f" "$WORK/$SUBFOLDER/" || true
+          done
+
+          cd "$WORK"
+          git add -A
+          git diff --staged --quiet || git commit -m "evidence: screenshots PR-${PR} @ $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          git push origin "$BRANCH" --force
+          echo "✅ Screenshots publicados em visionguard-evidence/${SUBFOLDER}"
+
+          BASE_URL="https://raw.githubusercontent.com/${{ github.repository }}/visionguard-evidence/${SUBFOLDER}"
+          echo "SCREENSHOTS_BASE_URL=${BASE_URL}" >> "$GITHUB_ENV"
 
       - name: 🧠 Executar Auditoria (Gemini)
         if: always()
@@ -66,4 +104,59 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPO_OWNER: ${{ github.repository_owner }}
           REPO_NAME: ${{ github.event.repository.name }}
+          SCREENSHOTS_BASE_URL: ${{ env.SCREENSHOTS_BASE_URL }}
         run: node ai_agents/visual_qa.js
+
+      - name: 📊 Publicar badge e histórico
+        if: always()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          BRANCH="visionguard-evidence"
+          PR="${{ github.event.pull_request.number }}"
+
+          git config user.name "visionguard-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          WORK=$(mktemp -d)
+          git clone --depth 1 --branch "$BRANCH" \
+            "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git" "$WORK"
+          cd "$WORK"
+          git config user.name "visionguard-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          cd "$OLDPWD"
+
+          [ -f badge.json ] && cp badge.json "$WORK/"
+
+          # Histórico de auditorias
+          HISTORY="$WORK/audit-history.md"
+          if [ ! -f "$HISTORY" ]; then
+            printf '# Histórico de Auditorias VisionGuard\n\n| Data | Commit | PR | Veredito | Run |\n|---|---|---|---|---|\n' > "$HISTORY"
+          fi
+          DATE=$(date -u +"%Y-%m-%d %H:%M UTC")
+          SHA="${{ github.sha }}"
+          SHA_SHORT="${SHA:0:7}"
+          RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          PR_URL="${{ github.event.pull_request.html_url }}"
+          VEREDITO=$(grep -o '\[APROVADO\]\|\[REPROVADO\]' audit-output.md 2>/dev/null | head -1 || echo "N/A")
+          printf '| %s | `%s` | [#%s](%s) | **%s** | [ver](%s) |\n' \
+            "$DATE" "$SHA_SHORT" "$PR" "$PR_URL" "$VEREDITO" "$RUN_URL" >> "$HISTORY"
+
+          cd "$WORK"
+          git add -A
+          git diff --staged --quiet || git commit -m "evidence: badge + histórico PR-${PR} @ $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          git push origin "$BRANCH" --force
+          echo "✅ Badge e histórico atualizados"
+
+      - name: 💾 Salvar Artefatos
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: visionguard-evidence-pr-${{ github.event.pull_request.number }}
+          path: |
+            screenshot-final.png
+            screenshot-btn-adicionar.png
+            screenshot-btn-excluir.png
+            audit-output.md
+          retention-days: 14
