@@ -55,12 +55,14 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -e
+          ORIG_DIR="$PWD"
           BRANCH="visionguard-evidence"
           PR="${{ github.event.pull_request.number }}"
           SUBFOLDER="pr-${PR}"
 
-          git config user.name "visionguard-bot"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Global para todos os repos criados neste step
+          git config --global user.name "visionguard-bot"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           WORK=$(mktemp -d)
           if git ls-remote --exit-code --heads origin "$BRANCH" > /dev/null 2>&1; then
@@ -74,14 +76,10 @@ jobs:
             echo "# VisionGuard — Evidências de Auditoria" > README.md
             git add README.md
             git commit -m "chore: init evidence branch"
+            cd "$ORIG_DIR"
           fi
 
-          cd "$WORK"
-          git config user.name "visionguard-bot"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          mkdir -p "$SUBFOLDER"
-          cd "$OLDPWD"
-
+          mkdir -p "$WORK/$SUBFOLDER"
           for f in screenshot-final.png screenshot-btn-adicionar.png screenshot-btn-excluir.png; do
             [ -f "$f" ] && cp "$f" "$WORK/$SUBFOLDER/" || true
           done
@@ -91,9 +89,9 @@ jobs:
           git diff --staged --quiet || git commit -m "evidence: screenshots PR-${PR} @ $(date -u +%Y-%m-%dT%H:%M:%SZ)"
           git push origin "$BRANCH" --force
           echo "✅ Screenshots publicados em visionguard-evidence/${SUBFOLDER}"
+          cd "$ORIG_DIR"
 
-          BASE_URL="https://raw.githubusercontent.com/${{ github.repository }}/visionguard-evidence/${SUBFOLDER}"
-          echo "SCREENSHOTS_BASE_URL=${BASE_URL}" >> "$GITHUB_ENV"
+          echo "SCREENSHOTS_BASE_URL=https://raw.githubusercontent.com/${{ github.repository }}/visionguard-evidence/${SUBFOLDER}" >> "$GITHUB_ENV"
 
       - name: 🧠 Executar Auditoria (Gemini)
         if: always()
@@ -113,23 +111,19 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -e
+          ORIG_DIR="$PWD"
           BRANCH="visionguard-evidence"
           PR="${{ github.event.pull_request.number }}"
 
-          git config user.name "visionguard-bot"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config --global user.name "visionguard-bot"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           WORK=$(mktemp -d)
           git clone --depth 1 --branch "$BRANCH" \
             "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git" "$WORK"
-          cd "$WORK"
-          git config user.name "visionguard-bot"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          cd "$OLDPWD"
 
           [ -f badge.json ] && cp badge.json "$WORK/"
 
-          # Histórico de auditorias
           HISTORY="$WORK/audit-history.md"
           if [ ! -f "$HISTORY" ]; then
             printf '# Histórico de Auditorias VisionGuard\n\n| Data | Commit | PR | Veredito | Run |\n|---|---|---|---|---|\n' > "$HISTORY"
@@ -148,6 +142,7 @@ jobs:
           git diff --staged --quiet || git commit -m "evidence: badge + histórico PR-${PR} @ $(date -u +%Y-%m-%dT%H:%M:%SZ)"
           git push origin "$BRANCH" --force
           echo "✅ Badge e histórico atualizados"
+          cd "$ORIG_DIR"
 
       - name: 💾 Salvar Artefatos
         if: always()

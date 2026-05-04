@@ -62,12 +62,13 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -e
+          ORIG_DIR="$PWD"
           BRANCH="visionguard-evidence"
           SHA_SHORT="${GITHUB_SHA:0:7}"
           SUBFOLDER="deploy-${SHA_SHORT}"
 
-          git config user.name "visionguard-bot"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config --global user.name "visionguard-bot"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           WORK=$(mktemp -d)
           if git ls-remote --exit-code --heads origin "$BRANCH" > /dev/null 2>&1; then
@@ -81,14 +82,10 @@ jobs:
             echo "# VisionGuard — Evidências de Auditoria" > README.md
             git add README.md
             git commit -m "chore: init evidence branch"
+            cd "$ORIG_DIR"
           fi
 
-          cd "$WORK"
-          git config user.name "visionguard-bot"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          mkdir -p "$SUBFOLDER"
-          cd "$OLDPWD"
-
+          mkdir -p "$WORK/$SUBFOLDER"
           for f in screenshot-final.png screenshot-btn-adicionar.png screenshot-btn-excluir.png; do
             [ -f "$f" ] && cp "$f" "$WORK/$SUBFOLDER/" || true
           done
@@ -97,9 +94,9 @@ jobs:
           git add -A
           git diff --staged --quiet || git commit -m "evidence: pré-deploy ${SHA_SHORT} @ $(date -u +%Y-%m-%dT%H:%M:%SZ)"
           git push origin "$BRANCH" --force
+          cd "$ORIG_DIR"
 
-          BASE_URL="https://raw.githubusercontent.com/${{ github.repository }}/visionguard-evidence/${SUBFOLDER}"
-          echo "SCREENSHOTS_BASE_URL=${BASE_URL}" >> "$GITHUB_ENV"
+          echo "SCREENSHOTS_BASE_URL=https://raw.githubusercontent.com/${{ github.repository }}/visionguard-evidence/${SUBFOLDER}" >> "$GITHUB_ENV"
 
       - name: 🧠 Auditoria pré-deploy (relatório p/ revisor)
         env:
@@ -212,22 +209,19 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -e
+          ORIG_DIR="$PWD"
           BRANCH="visionguard-evidence"
           SHA_SHORT="${GITHUB_SHA:0:7}"
           SUBFOLDER="prod-${SHA_SHORT}"
 
-          git config user.name "visionguard-bot"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config --global user.name "visionguard-bot"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           WORK=$(mktemp -d)
           git clone --depth 1 --branch "$BRANCH" \
             "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git" "$WORK"
-          cd "$WORK"
-          git config user.name "visionguard-bot"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          mkdir -p "$SUBFOLDER"
-          cd "$OLDPWD"
 
+          mkdir -p "$WORK/$SUBFOLDER"
           for f in screenshot-final.png screenshot-btn-adicionar.png screenshot-btn-excluir.png; do
             [ -f "$f" ] && cp "$f" "$WORK/$SUBFOLDER/" || true
           done
@@ -236,9 +230,9 @@ jobs:
           git add -A
           git diff --staged --quiet || git commit -m "evidence: prod smoke ${SHA_SHORT} @ $(date -u +%Y-%m-%dT%H:%M:%SZ)"
           git push origin "$BRANCH" --force
+          cd "$ORIG_DIR"
 
-          BASE_URL="https://raw.githubusercontent.com/${{ github.repository }}/visionguard-evidence/${SUBFOLDER}"
-          echo "SCREENSHOTS_BASE_URL=${BASE_URL}" >> "$GITHUB_ENV"
+          echo "SCREENSHOTS_BASE_URL=https://raw.githubusercontent.com/${{ github.repository }}/visionguard-evidence/${SUBFOLDER}" >> "$GITHUB_ENV"
 
       - name: 🧠 Auditoria cognitiva em produção (STRICT)
         env:
@@ -254,18 +248,15 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -e
+          ORIG_DIR="$PWD"
           BRANCH="visionguard-evidence"
 
-          git config user.name "visionguard-bot"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config --global user.name "visionguard-bot"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           WORK=$(mktemp -d)
           git clone --depth 1 --branch "$BRANCH" \
             "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git" "$WORK"
-          cd "$WORK"
-          git config user.name "visionguard-bot"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          cd "$OLDPWD"
 
           [ -f badge.json ] && cp badge.json "$WORK/"
 
@@ -284,6 +275,7 @@ jobs:
           git add -A
           git diff --staged --quiet || git commit -m "evidence: badge + histórico prod ${SHA_SHORT}"
           git push origin "$BRANCH" --force
+          cd "$ORIG_DIR"
 
       - name: 💾 Salvar evidências de produção
         if: always()
