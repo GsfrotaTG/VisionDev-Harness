@@ -80,7 +80,7 @@ jobs:
           fi
 
           mkdir -p "$WORK/$SUBFOLDER"
-          for f in screenshot-final.png screenshot-btn-adicionar.png screenshot-btn-excluir.png; do
+          for f in screenshot-*.png; do
             [ -f "$f" ] && cp "$f" "$WORK/$SUBFOLDER/" || true
           done
 
@@ -150,8 +150,6 @@ jobs:
         with:
           name: visionguard-evidence-pr-${{ github.event.pull_request.number }}
           path: |
-            screenshot-final.png
-            screenshot-btn-adicionar.png
-            screenshot-btn-excluir.png
+            screenshot-*.png
             audit-output.md
           retention-days: 14

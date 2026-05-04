@@ -1,0 +1,6 @@
+[
+  { "label": "Botão Adicionar", "selector": "[data-testid='submit-button']" },
+  { "label": "Botão Excluir",   "selector": "[data-testid='delete-button']"  },
+  { "label": "Botão Entrar",    "selector": "[data-testid='login-button']"   },
+  { "label": "Botão Cancelar",  "selector": "[data-testid='cancel-button']"  }
+]
