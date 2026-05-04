@@ -58,7 +58,7 @@ jobs:
           ORIG_DIR="$PWD"
           BRANCH="visionguard-evidence"
           PR="${{ github.event.pull_request.number }}"
-          SUBFOLDER="pr-${PR}"
+          SUBFOLDER="pr-${PR}/run-${{ github.run_number }}"
 
           # Global para todos os repos criados neste step
           git config --global user.name "visionguard-bot"

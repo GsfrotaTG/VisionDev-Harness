@@ -65,7 +65,7 @@ jobs:
           ORIG_DIR="$PWD"
           BRANCH="visionguard-evidence"
           SHA_SHORT="${GITHUB_SHA:0:7}"
-          SUBFOLDER="deploy-${SHA_SHORT}"
+          SUBFOLDER="deploy-${SHA_SHORT}-run-${{ github.run_number }}"
 
           git config --global user.name "visionguard-bot"
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -212,7 +212,7 @@ jobs:
           ORIG_DIR="$PWD"
           BRANCH="visionguard-evidence"
           SHA_SHORT="${GITHUB_SHA:0:7}"
-          SUBFOLDER="prod-${SHA_SHORT}"
+          SUBFOLDER="prod-${SHA_SHORT}-run-${{ github.run_number }}"
 
           git config --global user.name "visionguard-bot"
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
