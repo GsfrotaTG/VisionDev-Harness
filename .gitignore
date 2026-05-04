@@ -1,0 +1,22 @@
+# Environment — NUNCA commitar
+.env
+.env.local
+.env.*.local
+
+# Dependencies
+node_modules/
+
+# Playwright
+test-results/
+playwright-report/
+.last-run.json
+
+# Artifacts gerados pela esteira (regenerados a cada run)
+screenshot-final.png
+audit-output.md
+changes.diff
+
+# OS / IDE
+.DS_Store
+.vscode/
+.idea/

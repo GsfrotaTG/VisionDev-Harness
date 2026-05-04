@@ -1,0 +1,29 @@
+{
+  "name": "visiondev-harness",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "directories": {
+    "test": "tests"
+  },
+  "scripts": {
+    "start": "http-server public -p 8080",
+    "test": "playwright test",
+    "audit": "node ai_agents/visual_qa.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@google/generative-ai": "^0.24.1",
+    "@octokit/rest": "^22.0.1",
+    "@playwright/test": "^1.59.1",
+    "dotenv": "^17.4.2",
+    "http-server": "^14.1.1",
+    "playwright": "^1.59.1"
+  },
+  "devDependencies": {
+    "wait-on": "^8.0.3"
+  }
+}

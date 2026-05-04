@@ -1,0 +1,208 @@
+name: VisionGuard Production Pipeline
+
+# Continuous Inspection cognitivo em produção:
+#   1. snapshot   → guarda gh-pages atual em prod-stable (last-known-good)
+#   2. deploy     → publica public/ em gh-pages
+#   3. smoke      → HTTP check + Playwright + Gemini audit contra a URL real de prod
+#   4. rollback   → se smoke falhar, restaura prod-stable e abre issue
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: visionguard-prod
+  cancel-in-progress: false
+
+env:
+  PROD_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/
+
+jobs:
+  # ─── 1. Snapshot da versão atual de produção ──────────────────────────────
+  snapshot:
+    name: 📦 Snapshot prod-stable
+    runs-on: ubuntu-latest
+    outputs:
+      had_previous: ${{ steps.snap.outputs.had_previous }}
+    steps:
+      - name: Checkout do gh-pages atual
+        id: checkout-pages
+        uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+          path: pages-current
+        continue-on-error: true
+
+      - name: Promover gh-pages → prod-stable
+        id: snap
+        run: |
+          if [ -d pages-current ] && [ -f pages-current/index.html ]; then
+            cd pages-current
+            git config user.name "visionguard-bot"
+            git config user.email "visionguard@users.noreply.github.com"
+            git checkout -B prod-stable
+            git push origin prod-stable --force
+            echo "had_previous=true" >> $GITHUB_OUTPUT
+            echo "✅ Snapshot salvo em prod-stable"
+          else
+            echo "had_previous=false" >> $GITHUB_OUTPUT
+            echo "ℹ️ Nenhum gh-pages anterior — primeiro deploy"
+          fi
+
+  # ─── 2. Deploy em produção (GitHub Pages) ─────────────────────────────────
+  deploy:
+    name: 🚀 Deploy em produção
+    needs: snapshot
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Publicar public/ em gh-pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./public
+          publish_branch: gh-pages
+          commit_message: "deploy: ${{ github.sha }}"
+
+  # ─── 3. Smoke test em produção (HTTP + IA) ────────────────────────────────
+  smoke-test:
+    name: 🔬 Smoke test em produção
+    needs: deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 🔑 Verificar GEMINI_API_KEY
+        run: |
+          if [ -z "${{ secrets.GEMINI_API_KEY }}" ]; then
+            echo "❌ GEMINI_API_KEY ausente — sem secret não há auditoria. Falhando para acionar rollback."
+            exit 1
+          fi
+
+      - name: ⏳ Aguardar prod responder HTTP 200
+        run: |
+          for i in {1..30}; do
+            CODE=$(curl -s -o /dev/null -w "%{http_code}" "$PROD_URL")
+            if [ "$CODE" = "200" ]; then
+              echo "✅ Prod live em $PROD_URL"
+              exit 0
+            fi
+            echo "⏳ ($i/30) Aguardando prod... HTTP=$CODE"
+            sleep 10
+          done
+          echo "❌ Prod não respondeu HTTP 200 em 5min"
+          exit 1
+
+      - name: ⚙️ Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: 📦 Instalar dependências
+        run: |
+          npm install
+          npx playwright install chromium --with-deps
+
+      - name: 📸 Capturar screenshot de produção
+        env:
+          BASE_URL: ${{ env.PROD_URL }}
+        run: npx playwright test tests/visual.spec.js
+
+      - name: 🧠 Auditoria cognitiva (STRICT)
+        env:
+          CI: 'true'
+          STRICT_MODE: 'true'
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: node ai_agents/visual_qa.js
+
+      - name: 💾 Salvar evidências
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: prod-smoke-evidence
+          path: |
+            screenshot-final.png
+            audit-output.md
+          retention-days: 14
+
+  # ─── 4. Rollback automático em caso de falha ──────────────────────────────
+  rollback:
+    name: 🔙 Rollback automático
+    needs: [snapshot, smoke-test]
+    if: failure() && needs.smoke-test.result == 'failure'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Baixar evidências do smoke test
+        uses: actions/download-artifact@v4
+        with:
+          name: prod-smoke-evidence
+          path: ./evidence
+        continue-on-error: true
+
+      - name: Restaurar prod-stable em gh-pages
+        if: needs.snapshot.outputs.had_previous == 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: prod-stable
+          path: stable
+
+      - name: Force-push prod-stable → gh-pages
+        if: needs.snapshot.outputs.had_previous == 'true'
+        run: |
+          cd stable
+          git config user.name "visionguard-bot"
+          git config user.email "visionguard@users.noreply.github.com"
+          git checkout -B gh-pages
+          git push origin gh-pages --force
+          echo "✅ Rollback concluído — gh-pages restaurado para prod-stable"
+
+      - name: Abrir issue de incidente
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let auditBody = '_(relatório de auditoria não disponível)_';
+            try {
+              auditBody = fs.readFileSync('./evidence/audit-output.md', 'utf8');
+            } catch (e) { /* artifact ausente — segue */ }
+
+            const hadPrevious = '${{ needs.snapshot.outputs.had_previous }}' === 'true';
+            const rollbackNote = hadPrevious
+              ? '✅ **Rollback automático executado.** A versão estável anterior foi restaurada em produção.'
+              : '⚠️ **Rollback não executado** — não havia versão estável anterior (primeiro deploy).';
+
+            const sha = context.sha.substring(0, 7);
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `🚨 Incidente em produção — rollback automático (${sha})`,
+              body: [
+                `## Falha detectada no smoke test pós-deploy`,
+                ``,
+                `${rollbackNote}`,
+                ``,
+                `- **Commit que falhou:** \`${context.sha}\``,
+                `- **Workflow run:** [Ver logs](${runUrl})`,
+                `- **URL de produção:** ${process.env.PROD_URL || 'N/A'}`,
+                ``,
+                `### Relatório do VisionGuard`,
+                ``,
+                auditBody,
+                ``,
+                `---`,
+                `_Ação: investigar a causa da reprovação, corrigir, abrir PR. O VisionGuard reauditará automaticamente._`,
+              ].join('\n'),
+              labels: ['rollback', 'production-incident', 'visionguard'],
+            });
+        env:
+          PROD_URL: ${{ env.PROD_URL }}
