@@ -2,7 +2,7 @@ const fs = require('fs');
 const { test } = require('@playwright/test');
 
 test('Capturar evidencias visuais', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('./');
   await page.waitForSelector('[data-testid="task-list"]');
   await page.waitForLoadState('networkidle');
 
