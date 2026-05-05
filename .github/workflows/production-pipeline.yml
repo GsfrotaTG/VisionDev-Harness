@@ -16,129 +16,12 @@ concurrency:
 
 env:
   PROD_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/
-  SANDBOX_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/sandbox/
   PAGES_BASE: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}
 
 jobs:
-  # ─── 1. Sandbox: deploy + testes funcionais + auditoria ──────────────────
-  sandbox:
-    name: 🧪 Sandbox (testes + auditoria)
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: 🔑 Verificar GEMINI_API_KEY
-        run: |
-          if [ -z "${{ secrets.GEMINI_API_KEY }}" ]; then
-            echo "❌ GEMINI_API_KEY ausente."
-            exit 1
-          fi
-
-      - name: ⚙️ Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: 'npm'
-
-      - name: 📦 Instalar Dependências
-        run: |
-          npm install
-          npx playwright install chromium --with-deps
-
-      - name: 🚀 Deploy para /sandbox/
-        uses: peaceiris/actions-gh-pages@v4
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./public
-          publish_branch: gh-pages
-          destination_dir: sandbox
-          keep_files: true
-          commit_message: "sandbox: ${{ github.sha }}"
-
-      - name: ⏳ Aguardar sandbox responder HTTP 200
-        run: |
-          for i in {1..30}; do
-            CODE=$(curl -s -o /dev/null -w "%{http_code}" "${{ env.SANDBOX_URL }}")
-            if [ "$CODE" = "200" ]; then
-              echo "✅ Sandbox live"
-              exit 0
-            fi
-            echo "⏳ ($i/30) HTTP=$CODE — aguardando..."
-            sleep 10
-          done
-          echo "❌ Sandbox não respondeu HTTP 200 em 5min"
-          exit 1
-
-      - name: 🧪 Testes funcionais (Playwright)
-        env:
-          BASE_URL: ${{ env.SANDBOX_URL }}
-        run: npx playwright test tests/functional.spec.js
-
-      - name: 📸 Capturar evidências visuais (sandbox)
-        env:
-          BASE_URL: ${{ env.SANDBOX_URL }}
-        run: npx playwright test tests/visual.spec.js
-
-      - name: 📤 Publicar screenshots em gh-pages/evidence/sandbox/
-        if: always()
-        continue-on-error: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -e
-          ORIG_DIR="$PWD"
-          SHA_SHORT="${GITHUB_SHA:0:7}"
-          SUBFOLDER="evidence/sandbox/${SHA_SHORT}-run-${{ github.run_number }}"
-
-          git config --global user.name "visionguard-bot"
-          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          if ! git ls-remote --exit-code --heads origin gh-pages > /dev/null 2>&1; then
-            echo "ℹ️ gh-pages não existe ainda"
-            exit 0
-          fi
-
-          WORK=$(mktemp -d)
-          git clone --depth 1 --branch gh-pages \
-            "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git" "$WORK"
-
-          mkdir -p "$WORK/$SUBFOLDER"
-          for f in screenshot-*.png; do
-            [ -f "$f" ] && cp "$f" "$WORK/$SUBFOLDER/" || true
-          done
-
-          cd "$WORK"
-          git add -A
-          git diff --staged --quiet && { echo "ℹ️ Sem screenshots novos"; exit 0; }
-          git commit -m "evidence: sandbox ${SHA_SHORT} run-${{ github.run_number }} @ $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          git push origin gh-pages
-          cd "$ORIG_DIR"
-
-          echo "SCREENSHOTS_BASE_URL=${{ env.PAGES_BASE }}/${SUBFOLDER}" >> "$GITHUB_ENV"
-
-      - name: 🧠 Auditoria cognitiva (sandbox — sem STRICT)
-        if: always()
-        env:
-          CI: 'true'
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          SCREENSHOTS_BASE_URL: ${{ env.SCREENSHOTS_BASE_URL }}
-        run: node ai_agents/visual_qa.js
-
-      - name: 💾 Salvar evidências do sandbox
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: sandbox-evidence-${{ github.sha }}
-          path: |
-            screenshot-*.png
-            audit-output.md
-          retention-days: 14
-
-  # ─── 2. Snapshot da versão atual de produção ──────────────────────────────
+  # ─── 1. Snapshot da versão atual de produção ──────────────────────────────
   snapshot:
     name: 📦 Snapshot prod-stable
-    needs: sandbox
     runs-on: ubuntu-latest
     outputs:
       had_previous: ${{ steps.snap.outputs.had_previous }}
@@ -166,7 +49,7 @@ jobs:
             echo "ℹ️ Nenhum gh-pages anterior — primeiro deploy"
           fi
 
-  # ─── 3. Deploy em produção (gate: aprovação humana) ───────────────────────
+  # ─── 2. Deploy em produção (gate: aprovação humana) ───────────────────────
   deploy:
     name: 🚀 Deploy em produção
     needs: snapshot
@@ -183,12 +66,14 @@ jobs:
           keep_files: true
           commit_message: "deploy: ${{ github.sha }}"
 
-  # ─── 4. Smoke test em produção (HTTP + IA STRICT) ─────────────────────────
+  # ─── 3. Smoke test em produção (funcional + visual + IA STRICT) ───────────
   smoke-test:
     name: 🔬 Smoke test em produção
     needs: deploy
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    outputs:
+      screenshots_url: ${{ steps.evidence.outputs.screenshots_url }}
     steps:
       - uses: actions/checkout@v4
 
@@ -217,12 +102,18 @@ jobs:
           npm install
           npx playwright install chromium --with-deps
 
+      - name: 🧪 Testes funcionais em produção
+        env:
+          BASE_URL: ${{ env.PROD_URL }}
+        run: npx playwright test tests/functional.spec.js
+
       - name: 📸 Capturar screenshot de produção
         env:
           BASE_URL: ${{ env.PROD_URL }}
         run: npx playwright test tests/visual.spec.js
 
       - name: 📤 Publicar screenshots de produção em gh-pages/evidence/prod/
+        id: evidence
         if: always()
         continue-on-error: true
         env:
@@ -252,7 +143,9 @@ jobs:
           git push origin gh-pages
           cd "$ORIG_DIR"
 
-          echo "SCREENSHOTS_BASE_URL=${{ env.PAGES_BASE }}/${SUBFOLDER}" >> "$GITHUB_ENV"
+          SCREENSHOTS_URL="${{ env.PAGES_BASE }}/${SUBFOLDER}"
+          echo "SCREENSHOTS_BASE_URL=${SCREENSHOTS_URL}" >> "$GITHUB_ENV"
+          echo "screenshots_url=${SCREENSHOTS_URL}" >> "$GITHUB_OUTPUT"
 
       - name: 🧠 Auditoria cognitiva em produção (STRICT)
         env:
@@ -261,53 +154,6 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           SCREENSHOTS_BASE_URL: ${{ env.SCREENSHOTS_BASE_URL }}
         run: node ai_agents/visual_qa.js
-
-      - name: 📊 Atualizar badge e histórico
-        if: always()
-        continue-on-error: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -e
-          ORIG_DIR="$PWD"
-          BRANCH="visionguard-evidence"
-
-          git config --global user.name "visionguard-bot"
-          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          WORK=$(mktemp -d)
-          if git ls-remote --exit-code --heads origin "$BRANCH" > /dev/null 2>&1; then
-            git clone --depth 1 --branch "$BRANCH" \
-              "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git" "$WORK"
-          else
-            git init "$WORK"
-            cd "$WORK"
-            git remote add origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git"
-            git checkout --orphan "$BRANCH"
-            echo "# VisionGuard — Evidências de Auditoria" > README.md
-            git add README.md
-            git commit -m "chore: init evidence branch"
-            cd "$ORIG_DIR"
-          fi
-
-          [ -f badge.json ] && cp badge.json "$WORK/"
-
-          HISTORY="$WORK/audit-history.md"
-          if [ ! -f "$HISTORY" ]; then
-            printf '# Histórico de Auditorias VisionGuard\n\n| Data | Commit | Ambiente | Veredito | Run |\n|---|---|---|---|---|\n' > "$HISTORY"
-          fi
-          DATE=$(date -u +"%Y-%m-%d %H:%M UTC")
-          SHA_SHORT="${GITHUB_SHA:0:7}"
-          RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          VEREDITO=$(grep -o '\[APROVADO\]\|\[REPROVADO\]' audit-output.md 2>/dev/null | head -1 || echo "N/A")
-          printf '| %s | `%s` | produção | **%s** | [ver](%s) |\n' \
-            "$DATE" "$SHA_SHORT" "$VEREDITO" "$RUN_URL" >> "$HISTORY"
-
-          cd "$WORK"
-          git add -A
-          git diff --staged --quiet || git commit -m "evidence: badge + histórico prod ${SHA_SHORT}"
-          git push origin "$BRANCH" --force
-          cd "$ORIG_DIR"
 
       - name: 💾 Salvar evidências de produção
         if: always()
@@ -318,6 +164,148 @@ jobs:
             screenshot-*.png
             audit-output.md
           retention-days: 14
+
+  # ─── 4. Changelog (após smoke bem-sucedido) ───────────────────────────────
+  changelog:
+    name: 📋 Changelog de produção
+    needs: smoke-test
+    if: success()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Baixar evidências do smoke
+        uses: actions/download-artifact@v4
+        with:
+          name: prod-smoke-evidence-${{ github.sha }}
+          path: ./evidence
+
+      - name: 📋 Gerar changelog e comentar no PR mergeado
+        uses: actions/github-script@v7
+        env:
+          SCREENSHOTS_URL: ${{ needs.smoke-test.outputs.screenshots_url }}
+          PROD_URL: ${{ env.PROD_URL }}
+        with:
+          script: |
+            const fs = require('fs');
+            const sha = context.sha;
+            const shaShort = sha.substring(0, 7);
+            const date = new Date().toISOString().replace('T', ' ').substring(0, 16) + ' UTC';
+            const screenshotsUrl = process.env.SCREENSHOTS_URL || '';
+            const prodUrl = process.env.PROD_URL;
+
+            // Ler relatório do VisionGuard
+            let auditBody = '';
+            try { auditBody = fs.readFileSync('./evidence/audit-output.md', 'utf8'); } catch (e) {}
+
+            // Extrair descrição do Gemini
+            const descMatch = auditBody.match(/\*\*Descrição:\*\* (.+)/);
+            const geminiDesc = descMatch ? descMatch[1] : 'Auditoria visual aprovada.';
+
+            // Encontrar o PR associado ao commit
+            const { data: pulls } = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              commit_sha: sha,
+            });
+            const pr = pulls[0];
+            const prRef = pr ? `[#${pr.number}](${pr.html_url}) — ${pr.title} (@${pr.user.login})` : `commit \`${shaShort}\``;
+            const prNumber = pr?.number;
+
+            // Montar tabela de screenshots (close-ups)
+            let imgTable = '';
+            if (screenshotsUrl && fs.existsSync('./skills/capture-targets.json')) {
+              const targets = JSON.parse(fs.readFileSync('./skills/capture-targets.json', 'utf8'));
+              const existing = targets.filter(t => {
+                const slug = t.label.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+                return fs.existsSync(`./evidence/screenshot-${slug}.png`);
+              });
+              if (existing.length > 0) {
+                const headers = existing.map(t => `**${t.label}**`).join(' | ');
+                const seps    = existing.map(() => ':---:').join(' | ');
+                const imgs    = existing.map(t => {
+                  const slug = t.label.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+                  return `![${t.label}](${screenshotsUrl}/screenshot-${slug}.png)`;
+                }).join(' | ');
+                imgTable = `\n| ${headers} |\n| ${seps} |\n| ${imgs} |\n`;
+              }
+            }
+            const fullScreenshot = screenshotsUrl
+              ? `\n<details><summary>📸 Interface em produção</summary>\n\n![prod](${screenshotsUrl}/screenshot-final.png)\n\n</details>\n`
+              : '';
+
+            // Entrada do CHANGELOG
+            const entry = [
+              `## [${shaShort}] — ${date}`,
+              `**PR:** ${prRef}`,
+              `**Prod:** ${prodUrl}`,
+              imgTable,
+              fullScreenshot,
+              `> ${geminiDesc}`,
+              '',
+            ].join('\n');
+
+            // Commitar CHANGELOG.md em main via API (não requer git local)
+            try {
+              let existingFile = null;
+              try {
+                const resp = await github.rest.repos.getContent({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  path: 'CHANGELOG.md',
+                  ref: 'main',
+                });
+                existingFile = resp.data;
+              } catch (e) {}
+
+              const currentContent = existingFile
+                ? Buffer.from(existingFile.content, 'base64').toString('utf8')
+                : '# Changelog\n\n';
+
+              const anchor = '# Changelog\n\n';
+              const newContent = currentContent.includes(anchor)
+                ? currentContent.replace(anchor, anchor + entry + '\n---\n\n')
+                : anchor + entry + '\n---\n\n' + currentContent;
+
+              await github.rest.repos.createOrUpdateFileContents({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                path: 'CHANGELOG.md',
+                message: `docs: changelog ${shaShort} [skip ci]`,
+                content: Buffer.from(newContent).toString('base64'),
+                sha: existingFile?.sha,
+                branch: 'main',
+              });
+              console.log('✅ CHANGELOG.md atualizado em main');
+            } catch (e) {
+              console.warn('⚠️  Não foi possível commitar CHANGELOG.md:', e.message);
+            }
+
+            // Comentar no PR mergeado
+            if (prNumber) {
+              const runUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+              const comment = [
+                `### 🚀 Deployed to Production — ✅ Smoke test aprovado`,
+                ``,
+                `| Campo | Valor |`,
+                `|---|---|`,
+                `| **Commit** | \`${shaShort}\` |`,
+                `| **Prod URL** | ${prodUrl} |`,
+                `| **Run** | [ver logs](${runUrl}) |`,
+                ``,
+                imgTable,
+                fullScreenshot,
+                `---`,
+                `> ${geminiDesc}`,
+              ].join('\n');
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                body: comment,
+              });
+              console.log(`✅ Comentário de deploy postado no PR #${prNumber}`);
+            }
 
   # ─── 5. Rollback automático em caso de falha ──────────────────────────────
   rollback:
@@ -350,24 +338,57 @@ jobs:
           git push origin gh-pages --force
           echo "✅ Rollback concluído — gh-pages restaurado para prod-stable"
 
+      - name: 🔄 Reverter merge commit em main
+        id: revert
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          SHA_SHORT="${GITHUB_SHA:0:7}"
+
+          git config --global user.name "visionguard-bot"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          WORK=$(mktemp -d)
+          git clone \
+            "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git" "$WORK"
+          cd "$WORK"
+
+          PARENT_COUNT=$(git show --no-patch --format='%P' "${{ github.sha }}" | wc -w)
+          if [ "$PARENT_COUNT" -ge "2" ]; then
+            git revert -m 1 --no-edit "${{ github.sha }}"
+          else
+            git revert --no-edit "${{ github.sha }}"
+          fi
+
+          git commit --amend -m "revert: rollback automático de ${SHA_SHORT} [skip ci]
+
+smoke test em prod falhou — ver issue de incidente"
+
+          git push origin main
+          echo "had_revert=true" >> "$GITHUB_OUTPUT"
+          echo "revert_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "✅ Revert commitado em main"
+
       - name: Abrir issue de incidente
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
             let auditBody = '_(relatório indisponível — verifique os artefatos do run)_';
-            try {
-              auditBody = fs.readFileSync('./evidence/audit-output.md', 'utf8');
-            } catch (e) { /* artifact ausente */ }
+            try { auditBody = fs.readFileSync('./evidence/audit-output.md', 'utf8'); } catch (e) {}
 
             const hadPrevious = '${{ needs.snapshot.outputs.had_previous }}' === 'true';
+            const hadRevert   = '${{ steps.revert.outputs.had_revert }}' === 'true';
+            const revertSha   = '${{ steps.revert.outputs.revert_sha }}' || null;
+
+            const repoBase = `https://github.com/${context.repo.owner}/${context.repo.repo}`;
             const rollbackNote = hadPrevious
-              ? '✅ **Rollback automático executado.** A versão estável anterior foi restaurada em produção.'
+              ? `✅ **Rollback automático executado.** A versão estável anterior foi restaurada em produção.${hadRevert && revertSha ? ` O merge commit foi revertido em \`main\`: [\`${revertSha.substring(0, 7)}\`](${repoBase}/commit/${revertSha}).` : ''}`
               : '⚠️ **Rollback não executado** — não havia versão estável anterior (primeiro deploy).';
 
             const sha = context.sha.substring(0, 7);
-            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
-            const prodUrl = process.env.PROD_URL || 'N/A';
+            const runUrl = `${repoBase}/actions/runs/${context.runId}`;
 
             await github.rest.issues.create({
               owner: context.repo.owner,
@@ -380,8 +401,8 @@ jobs:
                 ``,
                 `| Campo | Valor |`,
                 `|---|---|`,
-                `| **Commit** | \`${context.sha}\` |`,
-                `| **URL de prod** | ${prodUrl} |`,
+                `| **Commit falho** | \`${context.sha}\` |`,
+                `| **URL de prod** | ${process.env.PROD_URL || 'N/A'} |`,
                 `| **Workflow run** | [Ver logs](${runUrl}) |`,
                 ``,
                 `### Relatório do VisionGuard`,
