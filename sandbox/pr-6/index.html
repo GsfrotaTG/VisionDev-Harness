@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Template Playwright</title>
+    <style>
+        /* Reset e Variáveis */
+        :root {
+            --primary-color: #2563eb;
+            --primary-hover: #1d4ed8;
+            --bg-color: #f8fafc;
+            --text-color: #0f172a;
+            --border-color: #cbd5e1;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            line-height: 1.5;
+            display: flex;
+            flex-direction: column;
+            min-height: 100vh;
+        }
+
+        header, footer {
+            background-color: white;
+            padding: 1rem 2rem;
+            text-align: center;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        footer {
+            border-top: 1px solid var(--border-color);
+            border-bottom: none;
+            margin-top: auto;
+        }
+
+        main {
+            max-width: 600px;
+            margin: 2rem auto;
+            width: 100%;
+            padding: 0 1rem;
+        }
+
+        section {
+            background: white;
+            padding: 1.5rem;
+            border-radius: 8px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            margin-bottom: 1.5rem;
+        }
+
+        h2 {
+            font-size: 1.25rem;
+            margin-bottom: 1rem;
+        }
+
+        .input-group {
+            display: flex;
+            flex-direction: column;
+            margin-bottom: 1rem;
+        }
+
+        label {
+            font-weight: 500;
+            margin-bottom: 0.5rem;
+            color: #334155;
+        }
+
+        input {
+            padding: 0.75rem;
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            font-size: 1rem;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        input:focus {
+            border-color: var(--primary-color);
+            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+        }
+
+        button {
+            background-color: var(--primary-color);
+            color: white;
+            border: none;
+            padding: 0.75rem 1.5rem;
+            border-radius: 4px;
+            font-size: 1rem;
+            cursor: pointer;
+            width: 100%;
+            transition: background-color 0.2s;
+            font-weight: 500;
+        }
+
+        button:hover {
+            background-color: var(--primary-hover);
+        }
+
+        ul {
+            list-style-type: none;
+        }
+
+        .task-item {
+            padding: 1rem;
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            margin-bottom: 0.5rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background-color: #fff;
+            animation: fadeIn 0.2s ease-in-out;
+        }
+
+        .task-text {
+            word-break: break-word;
+            padding-right: 1rem;
+        }
+
+        .delete-btn {
+            background-color: #ef4444;
+            padding: 0.4rem 0.8rem;
+            font-size: 0.875rem;
+            width: auto;
+        }
+
+        .delete-btn:hover {
+            background-color: #dc2626;
+        }
+
+        /* Animação rápida para não causar "flakiness" nos testes de screenshot */
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(-5px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+    </style>
+</head>
+<body>
+    <header data-testid="app-header">
+        <h1>VisionGuard Demo — Multi-Screen</h1>
+    </header>
+
+    <main>
+        <!-- Seção de Formulário -->
+        <section class="form-section">
+            <h2>Adicionar Nova Tarefa</h2>
+            <form id="task-form" data-testid="task-form">
+                <div class="input-group">
+                    <label for="task-input">Nome da Tarefa</label>
+                    <input 
+                        type="text" 
+                        id="task-input" 
+                        name="task" 
+                        placeholder="Ex: Estudar Playwright" 
+                        required 
+                        data-testid="task-input"
+                    >
+                </div>
+                <button type="submit" data-testid="submit-button">Adicionar</button>
+            </form>
+        </section>
+
+        <!-- Seção da Lista -->
+        <section class="list-section">
+            <h2>Minhas Tarefas</h2>
+            <ul id="task-list" data-testid="task-list">
+                <!-- Item Estático -->
+                <li class="task-item" data-testid="task-item">
+                    <span class="task-text">Tarefa de Exemplo Estática</span>
+                    <button class="delete-btn" data-testid="delete-button">Excluir</button>
+                </li>
+            </ul>
+        </section>
+
+        <!-- ───── Módulo: Formulário de Login ───── -->
+        <section class="form-section" data-testid="login-section" style="margin-top:2rem; border-top: 2px dashed var(--border-color); padding-top:1.5rem;">
+            <h2>Login</h2>
+            <form id="login-form" data-testid="login-form">
+                <div class="input-group">
+                    <label for="email-input">E-mail</label>
+                    <input type="email" id="email-input" placeholder="voce@empresa.com" data-testid="email-input">
+                </div>
+                <div class="input-group">
+                    <label for="password-input">Senha</label>
+                    <input type="password" id="password-input" placeholder="••••••••" data-testid="password-input">
+                </div>
+                <div style="display:flex; gap:0.75rem;">
+                    <button type="submit"
+                            data-testid="login-button"
+                            style="background-color:#16a34a; flex:1;">
+                        Entrar
+                    </button>
+                    <button type="button"
+                            data-testid="cancel-button"
+                            style="background-color:#6b7280; flex:1;">
+                        Cancelar
+                    </button>
+                </div>
+            </form>
+        </section>
+    </main>
+
+    <footer data-testid="app-footer">
+        <p>&copy; 2026 Template para Testes</p>
+    </footer>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const form = document.getElementById('task-form');
+            const input = document.getElementById('task-input');
+            const list = document.getElementById('task-list');
+
+            // Função para inicializar o botão de deletar do item estático
+            document.querySelectorAll('.delete-btn').forEach(btn => {
+                btn.addEventListener('click', function() {
+                    this.closest('.task-item').remove();
+                });
+            });
+
+            // Lógica para adicionar nova tarefa
+            form.addEventListener('submit', (e) => {
+                e.preventDefault();
+                
+                const taskText = input.value.trim();
+                if (!taskText) return;
+
+                // Cria o container do item (li)
+                const li = document.createElement('li');
+                li.className = 'task-item';
+                li.setAttribute('data-testid', 'task-item'); // Rastreabilidade para o Playwright
+                
+                // Cria o texto da tarefa (span)
+                const span = document.createElement('span');
+                span.className = 'task-text';
+                span.textContent = taskText;
+
+                // Cria o botão de excluir
+                const deleteBtn = document.createElement('button');
+                deleteBtn.className = 'delete-btn';
+                deleteBtn.setAttribute('data-testid', 'delete-button');
+                deleteBtn.textContent = 'Excluir';
+                deleteBtn.onclick = function() {
+                    li.remove();
+                };
+
+                // Monta o item
+                li.appendChild(span);
+                li.appendChild(deleteBtn);
+
+                // Adiciona à lista e reseta o formulário
+                list.appendChild(li);
+                input.value = '';
+                input.focus();
+            });
+        });
+    </script>
+</body>
+</html>
