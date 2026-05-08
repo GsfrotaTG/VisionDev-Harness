@@ -70,13 +70,13 @@ A IA é guiada por um arquivo Markdown:
 
 Se a equipe de Produto decidir que o botão agora é roxo, ela edita o Markdown. Na próxima PR, a esteira já cobra a nova regra — **sem alterar uma linha de código do motor de testes**.
 
-### 2. Engenharia de Resiliência (Failover Indestrutível)
+### 2. Governança com Rollback Automático
 
-Dois níveis de fallback garantem que o negócio nunca para:
+O veredito da IA não é informativo — é gate. Em PR, `[REPROVADO]` bloqueia o merge. Em produção, com `STRICT_MODE=true`, ele derruba o smoke-test com exit code 2 e dispara rollback automático para a branch `prod-stable` (último deploy aprovado), além de abrir uma issue de incidente com o relatório completo da IA.
 
 ```
-Nível 1 (IA):       Gemini 2.5 Flash ──► falha? ──► Ollama local (NPU M4 Pro)
-Nível 2 (Release):  Deploy em prod    ──► falha? ──► Rollback automático p/ prod-stable
+PR:    [REPROVADO] ──► comentário detalhado, merge bloqueado
+Prod:  [REPROVADO] ──► rollback automático + issue `production-incident`
 ```
 
 ---
@@ -88,7 +88,6 @@ Nível 2 (Release):  Deploy em prod    ──► falha? ──► Rollback autom
 - Node.js 20+
 - Repositório no GitHub com GitHub Pages habilitado
 - Conta no Google AI Studio (Gemini API)
-- *(Opcional, dev only)* Ollama com `llama3.2-vision` para fallback local
 
 ### Configuração do repositório (uma vez)
 
@@ -120,8 +119,7 @@ npm run audit          # VisionGuard audita com Gemini
 | Camada | Tecnologia |
 |---|---|
 | Captura visual | Playwright |
-| IA cognitiva (cloud) | Google Gemini 2.5 Flash |
-| IA cognitiva (edge/dev) | Ollama llama3.2-vision |
+| IA cognitiva | Google Gemini 2.5 Flash |
 | GitHub integration | Octokit REST |
 | Deploy | GitHub Pages via peaceiris/actions-gh-pages |
 | Automação | GitHub Actions |
@@ -133,7 +131,7 @@ npm run audit          # VisionGuard audita com Gemini
 Esteira funcional com:
 - [x] Sandbox gate em Pull Requests
 - [x] Production pipeline com snapshot/deploy/smoke/rollback
-- [x] Failover Cloud → Edge
+- [x] Rollback automático orientado pelo veredito da IA
 - [x] Relatórios estruturados em comentários de PR e issues de incidente
 - [ ] Dashboard de histórico de auditorias *(roadmap)*
 - [ ] Orquestração multi-skill via Claude Sonnet *(roadmap — `scripts/orchestrator.py`)*

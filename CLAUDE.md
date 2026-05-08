@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**VisionDev-Harness** is an AI-powered visual QA automation system. It captures screenshots of a frontend app via Playwright, then sends the screenshot + git diff + business rules to Google Gemini 2.5 Flash (with Ollama as local-only fallback) for automated visual auditing. Results are posted as comments on GitHub PRs.
+**VisionDev-Harness** is an AI-powered visual QA automation system. It captures screenshots of a frontend app via Playwright, then sends the screenshot + git diff + business rules to Google Gemini 2.5 Flash for automated visual auditing. Results are posted as comments on GitHub PRs.
 
 ## Running the System
 
@@ -13,7 +13,6 @@ npm install
 npm start              # http-server public -p 8080
 npm test               # Playwright screenshot capture → screenshot-final.png
 npm run audit          # Gemini 2.5 Flash audit → prints report (+ PR comment if PR_NUMBER set)
-node ai_agents/local_qa.js  # local-only audit via Ollama (dev only)
 ```
 
 ## Architecture
@@ -49,19 +48,18 @@ Critérios de rollback combinados: HTTP 5xx/timeout **OU** veredito reprovado pe
 
 | File | Role |
 |------|------|
-| `ai_agents/visual_qa.js` | Primary audit agent: Gemini 2.5 Flash + retry/backoff + Ollama fallback (dev only) |
-| `ai_agents/local_qa.js` | Local-only audit via Ollama at `localhost:11434` (dev only, never runs in CI) |
+| `ai_agents/visual_qa.js` | Audit orchestrator: validates inputs, builds prompt, calls Gemini, writes outputs |
+| `ai_agents/providers/google_gemini.js` | Gemini 2.5 Flash transport — 3-attempt retry with exponential backoff |
 | `tests/visual.spec.js` | Playwright test — capture only, no assertions, outputs `screenshot-final.png` |
 | `playwright.config.js` | Fixed viewport 1280×800, CI retries, GitHub reporter |
 | `public/index.html` | Self-contained task manager demo app (the UI being audited) |
 | `scripts/orchestrator.py` | Future Claude Sonnet orchestration — not yet integrated |
 | `skills/business-rules.md` | UI rules injected as AI context (button colors, etc.) |
 
-### AI Model Strategy
+### AI Provider
 
-- **Cloud:** Google Gemini 2.5 Flash via `@google/generative-ai` — structured JSON output, 3-attempt retry with exponential backoff
-- **Local fallback:** Ollama `llama3.2-vision` at `http://localhost:11434/api/generate` — only triggered in dev (`CI !== 'true'`)
-- If all paths fail, posts an error comment to the PR with the exact failure reason
+- Google Gemini 2.5 Flash via `@google/generative-ai`, structured JSON output, 3-attempt retry with exponential backoff (1s/2s/4s).
+- If Gemini fails after retries, the run aborts with exit 1 and a PR comment explaining the failure. There is no local fallback by design — the harness is cloud-first.
 
 ## Environment Variables
 

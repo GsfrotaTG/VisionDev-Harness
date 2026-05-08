@@ -9,7 +9,8 @@
   "scripts": {
     "start": "http-server public -p 8080",
     "test": "playwright test",
-    "audit": "node ai_agents/visual_qa.js"
+    "audit": "node ai_agents/visual_qa.js",
+    "lint": "eslint . --ext .js,.html"
   },
   "keywords": [],
   "author": "",
@@ -24,6 +25,11 @@
     "playwright": "^1.59.1"
   },
   "devDependencies": {
+    "@html-eslint/eslint-plugin": "^0.24.0",
+    "@html-eslint/parser": "^0.24.0",
+    "eslint": "^8.57.1",
+    "eslint-plugin-html": "^8.1.2",
+    "eslint-plugin-jsx-a11y": "^6.10.0",
     "wait-on": "^8.0.3"
   }
 }

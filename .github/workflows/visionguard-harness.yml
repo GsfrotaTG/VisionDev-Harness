@@ -11,10 +11,11 @@ permissions:
 
 env:
   PAGES_BASE: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}
+  PR_NUM: ${{ github.event.pull_request.number }}
 
 jobs:
   cognitive-qa:
-    timeout-minutes: 15
+    timeout-minutes: 20
     runs-on: ubuntu-latest
 
     steps:
@@ -42,14 +43,48 @@ jobs:
 
       - name: 📦 Instalar Dependências
         run: |
-          npm install
+          npm ci
           npx playwright install chromium --with-deps
 
-      - name: 📸 Executar App e Playwright
+      - name: 🔍 Lint (Quality Gate sintático)
+        run: npm run lint
+
+      - name: 🚀 Deploy em sandbox (gh-pages/sandbox/pr-N/)
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./public
+          publish_branch: gh-pages
+          destination_dir: sandbox/pr-${{ env.PR_NUM }}
+          keep_files: true
+          commit_message: "sandbox: PR-${{ env.PR_NUM }} @ ${{ github.sha }}"
+
+      - name: ⏳ Aguardar sandbox HTTP 200
         run: |
-          npx http-server public -p 8080 &
-          npx wait-on http://localhost:8080 --timeout 30000
-          npx playwright test tests/visual.spec.js
+          SANDBOX_URL="${{ env.PAGES_BASE }}/sandbox/pr-${{ env.PR_NUM }}/"
+          echo "Aguardando $SANDBOX_URL ..."
+          for i in {1..30}; do
+            CODE=$(curl -s -o /dev/null -w "%{http_code}" "$SANDBOX_URL")
+            if [ "$CODE" = "200" ]; then
+              echo "✅ Sandbox live"
+              echo "SANDBOX_URL=$SANDBOX_URL" >> "$GITHUB_ENV"
+              exit 0
+            fi
+            echo "⏳ ($i/30) HTTP=$CODE"
+            sleep 10
+          done
+          echo "❌ Sandbox não respondeu em 5min"
+          exit 1
+
+      - name: 🧪 Testes funcionais (cliques)
+        env:
+          BASE_URL: ${{ env.PAGES_BASE }}/sandbox/pr-${{ env.PR_NUM }}/
+        run: npx playwright test tests/functional.spec.js
+
+      - name: 📸 Capturar evidências visuais
+        env:
+          BASE_URL: ${{ env.PAGES_BASE }}/sandbox/pr-${{ env.PR_NUM }}/
+        run: npx playwright test tests/visual.spec.js
 
       - name: 📤 Publicar screenshots em gh-pages/evidence/
         if: always()
@@ -59,16 +94,11 @@ jobs:
         run: |
           set -e
           ORIG_DIR="$PWD"
-          PR="${{ github.event.pull_request.number }}"
+          PR="${{ env.PR_NUM }}"
           SUBFOLDER="evidence/pr-${PR}/run-${{ github.run_number }}"
 
           git config --global user.name "visionguard-bot"
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          if ! git ls-remote --exit-code --heads origin gh-pages > /dev/null 2>&1; then
-            echo "ℹ️ gh-pages não existe ainda — imagens disponíveis após o primeiro deploy em main"
-            exit 0
-          fi
 
           WORK=$(mktemp -d)
           git clone --depth 1 --branch gh-pages \
@@ -91,10 +121,9 @@ jobs:
       - name: 🧠 Executar Auditoria (Gemini)
         if: always()
         env:
-          CI: 'true'
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_NUMBER: ${{ env.PR_NUM }}
           REPO_OWNER: ${{ github.repository_owner }}
           REPO_NAME: ${{ github.event.repository.name }}
           SCREENSHOTS_BASE_URL: ${{ env.SCREENSHOTS_BASE_URL }}
@@ -109,7 +138,7 @@ jobs:
           set -e
           ORIG_DIR="$PWD"
           BRANCH="visionguard-evidence"
-          PR="${{ github.event.pull_request.number }}"
+          PR="${{ env.PR_NUM }}"
 
           git config --global user.name "visionguard-bot"
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -154,7 +183,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: visionguard-evidence-pr-${{ github.event.pull_request.number }}
+          name: visionguard-evidence-pr-${{ env.PR_NUM }}
           path: |
             screenshot-*.png
             audit-output.md
