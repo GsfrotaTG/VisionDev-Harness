@@ -43,8 +43,11 @@ jobs:
 
       - name: 📦 Instalar Dependências
         run: |
-          npm install
+          npm ci
           npx playwright install chromium --with-deps
+
+      - name: 🔍 Lint (Quality Gate sintático)
+        run: npm run lint
 
       - name: 🚀 Deploy em sandbox (gh-pages/sandbox/pr-N/)
         uses: peaceiris/actions-gh-pages@v4

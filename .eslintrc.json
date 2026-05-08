@@ -1,0 +1,37 @@
+{
+  "root": true,
+  "env": {
+    "browser": true,
+    "node": true,
+    "es2022": true
+  },
+  "parserOptions": {
+    "ecmaVersion": 2022,
+    "sourceType": "script",
+    "ecmaFeatures": { "jsx": true }
+  },
+  "plugins": ["jsx-a11y"],
+  "extends": ["eslint:recommended", "plugin:jsx-a11y/recommended"],
+  "ignorePatterns": ["node_modules/", "test-results/"],
+  "overrides": [
+    {
+      "files": ["*.html"],
+      "parser": "@html-eslint/parser",
+      "plugins": ["@html-eslint"],
+      "extends": ["plugin:@html-eslint/recommended"],
+      "env": { "browser": true, "es2022": true },
+      "rules": {
+        "@html-eslint/indent": "off",
+        "@html-eslint/require-button-type": "error",
+        "@html-eslint/require-img-alt": "error",
+        "@html-eslint/require-lang": "error",
+        "@html-eslint/no-aria-hidden-body": "error",
+        "@html-eslint/require-meta-charset": "error",
+        "@html-eslint/require-meta-viewport": "error",
+        "@html-eslint/require-doctype": "error",
+        "@html-eslint/no-inline-styles": "error",
+        "no-console": "off"
+      }
+    }
+  ]
+}

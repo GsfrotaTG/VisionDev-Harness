@@ -19,6 +19,20 @@ env:
   PAGES_BASE: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}
 
 jobs:
+  # ─── 0. Lint (Quality Gate sintático) ────────────────────────────────────
+  lint:
+    name: 🔍 Lint (Quality Gate)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+      - run: npm ci
+      - name: 🔍 Lint (Quality Gate sintático)
+        run: npm run lint
+
   # ─── 1. Snapshot da versão atual de produção ──────────────────────────────
   snapshot:
     name: 📦 Snapshot prod-stable
@@ -52,7 +66,7 @@ jobs:
   # ─── 2. Deploy em produção (gate: aprovação humana) ───────────────────────
   deploy:
     name: 🚀 Deploy em produção
-    needs: snapshot
+    needs: [snapshot, lint]
     runs-on: ubuntu-latest
     environment: production
     steps:
@@ -99,7 +113,7 @@ jobs:
 
       - name: 📦 Instalar dependências
         run: |
-          npm install
+          npm ci
           npx playwright install chromium --with-deps
 
       - name: 🧪 Testes funcionais em produção

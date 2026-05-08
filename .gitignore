@@ -13,7 +13,10 @@ playwright-report/
 
 # Artifacts gerados pela esteira (regenerados a cada run)
 screenshot-final.png
+screenshot-*.png
+a11y-snapshot.json
 audit-output.md
+badge.json
 changes.diff
 
 # OS / IDE

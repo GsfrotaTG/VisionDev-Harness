@@ -10,6 +10,12 @@ test('Capturar evidencias visuais', async ({ page }) => {
   await page.screenshot({ path: 'screenshot-final.png', fullPage: true });
   console.log('✅ Full-page capturado');
 
+  // AOM Injection — árvore de acessibilidade para zerar alucinações da IA
+  // page.accessibility.snapshot() foi removido no Playwright 1.46+; ariaSnapshot() é o substituto canônico
+  const aomSnapshot = await page.locator('body').ariaSnapshot({ interestingOnly: false });
+  fs.writeFileSync('a11y-snapshot.json', aomSnapshot);
+  console.log('✅ AOM snapshot capturado');
+
   // Close-ups dinâmicos definidos em skills/capture-targets.json
   // Trocar de tela = editar o JSON. Zero alteração de código de teste.
   const targetsPath = './skills/capture-targets.json';
