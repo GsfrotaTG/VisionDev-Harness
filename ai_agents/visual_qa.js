@@ -2,7 +2,8 @@ require('dotenv').config();
 const fs = require("fs");
 const { Octokit } = require("@octokit/rest");
 const gemini = require("./providers/google_gemini");
-const ollama = require("./providers/ollama_local");
+
+const ENGINE = "Gemini 2.5 Flash (Cloud)";
 
 async function postPRComment(body) {
   if (!process.env.PR_NUMBER || process.env.PR_NUMBER === "undefined") return;
@@ -20,11 +21,11 @@ async function postPRComment(body) {
   }
 }
 
-function buildComment(agentUsed, humanReport, veredito, screenshotsUrl) {
+function buildComment(humanReport, veredito, screenshotsUrl) {
   const statusIcon = veredito === 'APROVADO' ? "✅" : "❌";
   const lines = [
     `### 🛡️ VisionGuard Audit — ${statusIcon} [${veredito ?? "N/A"}]`,
-    `**Motor:** \`${agentUsed}\``,
+    `**Motor:** \`${ENGINE}\``,
   ];
 
   if (screenshotsUrl) {
@@ -121,50 +122,32 @@ async function runVisionGuard() {
     .replaceAll("{{GIT_DIFF}}", diff)
     .replaceAll("{{AOM_TREE}}", aomTree);
 
-  let result = null;
-  let agentUsed = "";
-  let cloudErr = null;
-
+  let result;
   try {
     console.log("☁️  Iniciando análise com Google Gemini 2.5 Flash...");
     result = await gemini.audit({ prompt, screenshotBase64, screenshotMime: "image/png" });
-    agentUsed = "Gemini 2.5 Flash (Cloud)";
   } catch (err) {
-    cloudErr = err;
-    console.error(`❌ Gemini falhou após retries: [${err.status ?? err.code}] ${err.message}`);
-
-    if (process.env.CI !== "true") {
-      try {
-        console.log("🔄 Acionando fallback local (Ollama)...");
-        result = await ollama.audit({ prompt, screenshotBase64 });
-        agentUsed = "Ollama llama3.2-vision (Local)";
-      } catch (localErr) {
-        console.error("❌ Ollama também indisponível:", localErr.message);
-      }
-    }
-  }
-
-  if (!result) {
     const errorBody = [
       "### ⚠️ VisionGuard — Falha na Auditoria",
       "O motor de IA não conseguiu processar a análise. Detalhes do erro:",
-      `\`\`\`\n[${cloudErr?.status ?? cloudErr?.code}] ${cloudErr?.message}\n\`\`\``,
+      `\`\`\`\n[${err.status ?? err.code}] ${err.message}\n\`\`\``,
       "**Ação necessária:** Verifique se o secret `GEMINI_API_KEY` está configurado corretamente no repositório.",
     ].join("\n\n");
+    console.error(`❌ Gemini falhou após retries: [${err.status ?? err.code}] ${err.message}`);
     await postPRComment(errorBody);
     writeBadge(null);
     process.exit(1);
   }
 
   const humanReport = formatHumanReport(result);
-  console.log(`\n--- ✨ RELATÓRIO VISIONGUARD (${agentUsed}) ---`);
+  console.log(`\n--- ✨ RELATÓRIO VISIONGUARD (${ENGINE}) ---`);
   console.log(humanReport);
   console.log("-------------------------------------------\n");
 
-  fs.writeFileSync("audit-output.md", `### 🛡️ VisionGuard Audit\n**Motor:** \`${agentUsed}\`\n\n${humanReport}\n`);
+  fs.writeFileSync("audit-output.md", `### 🛡️ VisionGuard Audit\n**Motor:** \`${ENGINE}\`\n\n${humanReport}\n`);
   writeBadge(result.veredito);
 
-  const comment = buildComment(agentUsed, humanReport, result.veredito, process.env.SCREENSHOTS_BASE_URL || null);
+  const comment = buildComment(humanReport, result.veredito, process.env.SCREENSHOTS_BASE_URL || null);
   await postPRComment(comment);
 
   if (process.env.STRICT_MODE === "true" && result.veredito !== "APROVADO") {

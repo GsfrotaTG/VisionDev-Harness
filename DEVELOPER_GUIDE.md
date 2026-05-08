@@ -84,11 +84,13 @@ Run `npm run lint` before pushing. CI rejects PRs with lint failures before runn
 
 ---
 
-## 5. Adding a New AI Provider
+## 5. AI Provider Contract
 
-See `AGENT_INTEGRATION.md` for the full provider contract.
+See `AGENT_INTEGRATION.md` for the full contract. The current provider lives at `ai_agents/providers/google_gemini.js` and exports:
 
-Short version:
-1. Create `ai_agents/providers/<name>.js` exporting `async function audit({ prompt, screenshotBase64, screenshotMime })`.
-2. The function must return `{ veredito, descricao, violacoes, raw }`.
-3. Import in `ai_agents/visual_qa.js` and plug into the fallback chain.
+```js
+async function audit({ prompt, screenshotBase64, screenshotMime })
+  // → { veredito, descricao, violacoes, raw }
+```
+
+Replacing the provider (e.g., switching cloud models) means rewriting that file against the same shape. Adding a second provider is out of scope for the cloud-first design — if you have a use case that requires it, open an issue first.

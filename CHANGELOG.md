@@ -10,7 +10,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 
 #### Harness Cognitivo Industrial
-- **Provider pattern** (`ai_agents/providers/`): `google_gemini.js` and `ollama_local.js` each export a unified `audit()` contract — `{veredito, descricao, violacoes, raw}`. Retries and transport errors are provider-owned; the orchestrator is provider-agnostic.
+- **Provider module** (`ai_agents/providers/google_gemini.js`): exports a unified `audit()` contract — `{veredito, descricao, violacoes, raw}`. Retries and transport errors are provider-owned; the orchestrator is provider-agnostic.
 - **`skills/auditor-persona.md`**: single source of truth for the auditor persona and task instructions. Replaces two divergent inline prompts that had drifted apart. Placeholders: `{{BUSINESS_RULES}}`, `{{GIT_DIFF}}`, `{{AOM_TREE}}`.
 - **ESLint quality gate** (`npm run lint`): `eslint:recommended` + `eslint-plugin-jsx-a11y` for JS; `@html-eslint/parser` + `@html-eslint/eslint-plugin` for HTML structure and accessibility rules (`require-button-type`, `require-img-alt`, `require-lang`, `no-inline-styles`, etc.).
 - **`AGENT_INTEGRATION.md`**: MCP-style integration contract — inputs, provider contract signature, output contract (`APROVADO`/`REPROVADO`), exit code matrix, and environment variables.
@@ -27,13 +27,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **`public/index.html`**: full AOM retrofit — `aria-label`, `aria-required`, `role`, `autocomplete`, `name`, and `required` added to all interactive controls; inline styles on `.btn-login` and `.btn-cancel` moved to CSS classes to satisfy `@html-eslint/no-inline-styles` and keep business rule colors auditable.
 - **`ai_agents/visual_qa.js`**: rewritten as a "dumb orchestrator" (~90 lines). Provider selection, retries, and JSON coercion removed from this file entirely. Persona loaded from `skills/auditor-persona.md` at runtime.
-- **`ai_agents/local_qa.js`**: collapsed to a ~30-line dev CLI. Imports shared `ollama_local` provider; no more duplicated prompt or exit-code logic.
 - **`npm install` → `npm ci`** in both workflows for deterministic installs.
 
 ### Fixed
 
-- **Silent STRICT_MODE bug**: the original Ollama fallback path never assigned `veredito`, so `STRICT_MODE=true` could never fire exit code 2 when Gemini was down. `ollama_local.js` now always returns a populated `veredito` (regex fallback on the raw response if JSON parsing fails), making the rollback path reachable via either provider.
+- **STRICT_MODE rollback gate consolidado:** `STRICT_MODE=true` + veredito `REPROVADO` → exit 2 → rollback. O bug histórico onde o caminho de fallback Ollama nunca populava `veredito` ficou irrelevante: o fallback foi removido (ver "Removed" abaixo).
 - **`page.accessibility.snapshot()` removed in Playwright 1.46+**: migrated to `page.locator('body').ariaSnapshot({ interestingOnly: false })`, which is the canonical replacement in Playwright 1.46+.
+
+### Removed
+
+- **Ollama local fallback** (`ai_agents/providers/ollama_local.js` e `ai_agents/local_qa.js`): a arquitetura era cloud + edge na narrativa, mas só Gemini no fluxo principal. Posicionamento atualizado para "auditor cognitivo cloud-first" — uma história só, código alinhado.
+- **Variável `CI`** como gate de fallback no orquestrador e nos workflows (`env: CI: 'true'` em ambos `.github/workflows/*.yml`): tornou-se dead config após a remoção do fallback.
+- **`llama3.2-vision`** das dependências documentais e do README.
 
 ---
 

@@ -13,9 +13,9 @@ This document defines the integration contract for VisionGuard, enabling other a
 | Auditor persona | `skills/auditor-persona.md` | Yes | Prompt template with `{{BUSINESS_RULES}}`, `{{GIT_DIFF}}`, and `{{AOM_TREE}}` placeholders |
 | API key | `GEMINI_API_KEY` (env) | Yes | Google Gemini API key; absence aborts with exit 1 |
 
-## Provider Contract
+## Provider Contract Reference
 
-Each provider in `ai_agents/providers/` exports a single async function:
+The provider lives at `ai_agents/providers/google_gemini.js` and exports:
 
 ```js
 async function audit({ prompt, screenshotBase64, screenshotMime })
@@ -28,13 +28,9 @@ async function audit({ prompt, screenshotBase64, screenshotMime })
   // }
 ```
 
-### Adding a New Provider
-
-1. Create `ai_agents/providers/<name>.js` exporting `audit` with the signature above.
-2. Import it in `ai_agents/visual_qa.js`.
-3. Plug it into the fallback chain after the cloud provider.
-
 The provider is responsible for retries, transport errors, and normalizing the response into the contract shape. The orchestrator (`visual_qa.js`) must not contain any provider-specific logic.
+
+Replacing the provider (e.g., switching cloud models) means rewriting `google_gemini.js` against the same shape. Adding a second provider is out of scope for the cloud-first design — if you have a use case that requires it, open an issue first.
 
 ## Output Contract
 
@@ -48,7 +44,7 @@ The orchestrator writes `audit-output.md` with the full human-readable report af
 |-----------|-----------|
 | `GEMINI_API_KEY` missing | 1 |
 | `business-rules.md` missing or empty | 1 |
-| All providers failed | 1 |
+| Gemini provider failed after retries | 1 |
 | Audit OK, `veredito === 'APROVADO'` | 0 |
 | Audit OK, `veredito === 'REPROVADO'`, no `STRICT_MODE` | 0 |
 | Audit OK, `veredito === 'REPROVADO'`, `STRICT_MODE=true` | 2 |
@@ -66,7 +62,6 @@ Exit code **2** triggers the automatic rollback job in `production-pipeline.yml`
 | `REPO_NAME` | Orchestrator | GitHub repository name |
 | `SCREENSHOTS_BASE_URL` | Orchestrator | Base URL for inline screenshot images in PR comment |
 | `STRICT_MODE` | Orchestrator | Set to `"true"` to exit 2 on REPROVADO (triggers rollback) |
-| `CI` | Orchestrator | Set to `"true"` to disable local Ollama fallback |
 
 ## Prompt Template Placeholders
 

@@ -163,7 +163,6 @@ jobs:
 
       - name: 🧠 Auditoria cognitiva em produção (STRICT)
         env:
-          CI: 'true'
           STRICT_MODE: 'true'
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           SCREENSHOTS_BASE_URL: ${{ env.SCREENSHOTS_BASE_URL }}
